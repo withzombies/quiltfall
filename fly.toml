@@ -1,5 +1,5 @@
-# flyctl launch --copy-config --no-deploy --name YOUR-UNIQUE-APP-NAME
-# adds your actual app name. Run one machine with one volume.
+# Run one small machine with temporary SQLite storage and no volume.
+app = "quiltfall"
 primary_region = "iad"
 
 [build]
@@ -7,14 +7,9 @@ primary_region = "iad"
 
 [env]
   BIND_ADDR = "0.0.0.0:8080"
-  DATABASE_URL = "sqlite:///data/quiltfall.db"
+  DATABASE_URL = "sqlite:///tmp/quiltfall.db"
   COOKIE_SECURE = "true"
   RUST_LOG = "info"
-
-[[mounts]]
-  source = "quiltfall_data"
-  destination = "/data"
-  initial_size = "1gb"
 
 [http_service]
   internal_port = 8080

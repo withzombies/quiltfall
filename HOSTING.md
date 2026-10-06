@@ -126,45 +126,59 @@ matching browser cookie is still required to resume as an existing player.
 To check whether the server is responding, open `/health` on the same host and
 port, or run `curl http://localhost:3000/health`. A healthy server replies `ok`.
 
-## Optional Fly.io hosting
+## Fly.io hosting
+
+The deployed app is [quiltfall.fly.dev](https://quiltfall.fly.dev).
 
 The included Dockerfile embeds the browser assets into the Rust binary. The Fly
-configuration uses one small machine in `iad`, HTTPS, and a 1 GB volume at
-`/data`. Fly's root filesystem is ephemeral, so the SQLite file belongs on the
-volume. This intentionally accepts downtime during deployment and a single
-machine failure; it does not implement replication.
+configuration uses **one shared CPU, 256 MB RAM**, in `iad`, with HTTPS and
+**no persistent volume**. SQLite uses `/tmp/quiltfall.db` on the machine's
+unmounted, temporary filesystem.
 
-Fly.io has no ongoing free tier for new organizations. As checked October 6,
-2026, a 256 MB machine running continuously in `iad` costs $2.19 per 30 days,
-plus $0.15 for a 1 GB volume and outbound traffic. Auto-stop can reduce compute
-usage. A visible game has an open event stream, so close the game tabs when done.
-See [current pricing](https://docs.fly.io/about/pricing) and
-[volume documentation](https://docs.fly.io/volumes/overview).
+Games, browser identities, rematch offers, and stats are temporary on Fly.
+They may be lost when the machine is restarted, redeployed, migrated, or
+replaced. Browser cookies can remain after server data is lost; open the home
+page and start a new game if an old invite no longer exists. Local play still
+uses `data/quiltfall.db` and the backup instructions above.
 
-Install [flyctl](https://docs.fly.io/flyctl/install), then run these commands
-from the repository root when you choose to deploy:
+The machine stops when idle and starts on the next request. The first visit may
+take a few seconds. A visible game keeps an event stream open, so close game
+tabs when done. Fly charges for compute and outbound traffic; this setup does
+not provision paid volumes or a dedicated IPv4 address. Check
+[current pricing](https://docs.fly.io/about/pricing).
+
+Install [flyctl](https://docs.fly.io/flyctl/install), then deploy from the
+repository root:
 
 ```sh
 flyctl auth login
-flyctl launch --copy-config --no-deploy --ha=false --name YOUR-UNIQUE-APP-NAME
-flyctl volumes create quiltfall_data --region iad --size 1
-flyctl deploy --ha=false
+# For a new account/app, choose a globally unique name:
+flyctl apps create YOUR-UNIQUE-APP-NAME --org personal
+# Set app = "YOUR-UNIQUE-APP-NAME" at the top of fly.toml.
+flyctl ips allocate-v6
+flyctl ips allocate-v4 --shared
+flyctl deploy --remote-only --ha=false
 flyctl open
 ```
 
-Choose a globally unique app name and keep the supplied mounts, environment,
-port and machine settings. Skip provisioning managed Postgres or Redis; the
-application uses SQLite. If Fly Launch already creates the named 1 GB volume,
-reuse it rather than creating a second one (`flyctl volumes list`). Keep daily
-volume snapshots enabled and make separate backups of games you care about.
-Deploy one machine only: additional independent SQLite volumes would create
-separate histories. Automatic startup restores the latest committed board.
+For the already-created app named in `fly.toml`, skip app creation and IP
+allocation; use `flyctl deploy --remote-only --ha=false` for updates. The remote
+builder means Docker does not need to be installed on your computer.
 
-Local identities don't automatically transfer to a new Fly hostname because
-cookies are scoped to the original host. Start fresh there in the first version.
-No Fly resources were created as part of development. The container configuration
-is supplied for later; Docker wasn't installed in the development environment,
-so its image build has not been exercised here.
+Keep exactly one app machine: each machine has its own temporary database.
+Do not add a volume, managed database, or additional app machines to this setup.
+
+To inspect the deployment:
+
+```sh
+flyctl status
+flyctl checks list
+flyctl machine list
+flyctl volumes list
+```
+
+The volumes list should be empty. Local player identities do not transfer to
+Fly because cookies are scoped to the hostname; start fresh on the public URL.
 
 ## Development
 

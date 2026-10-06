@@ -15,7 +15,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/quiltfall /usr/local/bin/quiltfall
-ENV BIND_ADDR=0.0.0.0:8080 DATABASE_URL=sqlite:///data/quiltfall.db COOKIE_SECURE=true
-RUN mkdir -p /data
+ENV BIND_ADDR=0.0.0.0:8080 DATABASE_URL=sqlite:///tmp/quiltfall.db COOKIE_SECURE=true
 EXPOSE 8080
 CMD ["quiltfall"]
