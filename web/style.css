@@ -411,6 +411,12 @@ input:disabled {
   color: var(--muted);
   margin: 0;
 }
+.motion-viewport {
+  /* Leave room beyond the wooden frame, then clip at the phone's edge. */
+  margin-inline: -20px;
+  padding-inline: 20px;
+  overflow-x: clip;
+}
 .bed-frame {
   position: relative;
   margin: 0 auto;
@@ -455,9 +461,6 @@ input:disabled {
 .square:nth-child(12n + 11) {
   background: #aebaa3;
 }
-.square:nth-child(3n) {
-  background: #d7a58d;
-}
 .square:after {
   content: "";
   position: absolute;
@@ -487,6 +490,7 @@ input:disabled {
   inset: 0;
   pointer-events: none;
   overflow: visible;
+  z-index: 2;
 }
 .piece {
   position: absolute;
@@ -497,6 +501,7 @@ input:disabled {
   justify-content: center;
   filter: drop-shadow(0 3px 1px #493d3327);
   will-change: transform;
+  transform-origin: center 80%;
 }
 .piece img {
   width: 85%;
@@ -819,6 +824,10 @@ dialog h2 {
   }
 }
 @media (max-width: 360px) {
+  .motion-viewport {
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
   #app {
     padding: 0 12px;
   }

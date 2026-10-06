@@ -218,3 +218,436 @@ test("design fits narrow screens, loads art, and respects reduced motion", async
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
   await page.getByRole("button", { name: "Close rules" }).click();
 });
+
+// Pause real native animations so assertions inspect their intermediate frames.
+async function inspectMotion(page) {
+  await page.evaluate(() => {
+    window.motionLog = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args) {
+      const animation = animate.apply(this, args);
+      if (this.matches(".piece")) {
+        animation.pause();
+        window.motionLog.push({ animation, node: this });
+      }
+      return animation;
+    };
+  });
+}
+
+async function finishMotion(page, index) {
+  await page.evaluate((i) => window.motionLog[i].animation.finish(), index);
+}
+
+test("quilt alternates cream and sage without striped columns", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  const colors = await pair.host
+    .locator(".square")
+    .evaluateAll((nodes) =>
+      nodes.map((node) => getComputedStyle(node).backgroundColor),
+    );
+  expect(new Set(colors).size).toBe(2);
+  for (let y = 0; y < 6; y++) {
+    for (let x = 0; x < 6; x++)
+      expect(colors[y * 6 + x]).toBe(colors[(x + y) % 2]);
+  }
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("placement lands and rebounds before a neighbor hops on both phones", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  const snapshot = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  const first = snapshot.game.state.turn === 0 ? pair.host : pair.guest;
+  const second = first === pair.host ? pair.guest : pair.host;
+  for (const page of [first, second]) await inspectMotion(page);
+  await first.getByRole("button", { name: "C3: Empty", exact: true }).click();
+  for (const page of [first, second]) {
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    expect(
+      await page.evaluate(
+        () => window.motionLog[0].animation.effect.getTiming().duration,
+      ),
+    ).toBe(650);
+    const cell = await page.locator('[data-x="2"][data-y="2"]').boundingBox();
+    const initial = await page.evaluate(
+      () => window.motionLog[0].node.getBoundingClientRect().y,
+    );
+    expect(initial).toBeLessThan(cell.y - cell.height / 2);
+    await page.evaluate(() => {
+      window.motionLog[0].animation.currentTime = 650 * 0.42;
+    });
+    const landing = await page.evaluate(
+      () => window.motionLog[0].node.getBoundingClientRect().height,
+    );
+    expect(landing).toBeLessThan(cell.height);
+    await page.evaluate(() => {
+      window.motionLog[0].animation.currentTime = 650 * 0.65;
+    });
+    const rebound = await page.evaluate(
+      () => window.motionLog[0].node.getBoundingClientRect().y,
+    );
+    expect(rebound).toBeLessThan(cell.y - 5);
+    await expect(page.locator(".square.available:enabled")).toHaveCount(0);
+    await finishMotion(page, 0);
+    await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+  }
+  await second.getByRole("button", { name: "D3: Empty", exact: true }).click();
+  for (const page of [first, second]) {
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(2);
+    // The old kitten remains on C3 until the newcomer has landed.
+    expect(
+      await page.evaluate(() => window.motionLog[0].node.isConnected),
+    ).toBe(true);
+    await finishMotion(page, 1);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(3);
+    expect(
+      await page.evaluate(
+        () => window.motionLog[2].animation.effect.getTiming().duration,
+      ),
+    ).toBe(750);
+    await page.evaluate(() => {
+      window.motionLog[2].animation.currentTime = 750 * 0.4;
+    });
+    const moving = await page.evaluate(() =>
+      window.motionLog[2].node.getBoundingClientRect().toJSON(),
+    );
+    const start = await page.locator('[data-x="2"][data-y="2"]').boundingBox();
+    const end = await page.locator('[data-x="1"][data-y="2"]').boundingBox();
+    expect(moving.x).toBeLessThan(start.x);
+    expect(moving.x).toBeGreaterThan(end.x);
+    expect(moving.y).toBeLessThan(start.y - 5);
+    await finishMotion(page, 2);
+    await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+    expect(await page.evaluate(() => window.motionLog.length)).toBe(3);
+    await expect(
+      page.getByRole("button", { name: /B3:.*kitten/ }),
+    ).toBeVisible();
+  }
+  const a = await (await first.request.get(`/api/games/${pair.id}`)).json();
+  const b = await (await second.request.get(`/api/games/${pair.id}`)).json();
+  expect(a.game).toEqual(b.game);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+async function seedBoard(pair, setup) {
+  const snapshot = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  const state = snapshot.game.state;
+  state.turn = 0;
+  state.phase = { type: "placement" };
+  state.move_count = 0;
+  for (const piece of state.pieces) {
+    piece.pos = null;
+    piece.kind = "kitten";
+  }
+  setup(state);
+  execFileSync("python3", [
+    "-c",
+    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE games SET state=?,revision=revision+1 WHERE id=?", (sys.argv[2],sys.argv[1])); c.commit()',
+    pair.id,
+    JSON.stringify(state),
+  ]);
+  for (const page of [pair.host, pair.guest]) {
+    await page.reload();
+    await expect(page.locator("#connection")).toContainText("Connected");
+  }
+}
+
+test("cats and kittens tumble visibly over every edge in the push direction", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  const edges = [
+    { x: 0, y: 2, dx: -1, dy: 0 },
+    { x: 5, y: 2, dx: 1, dy: 0 },
+    { x: 2, y: 0, dx: 0, dy: -1 },
+    { x: 2, y: 5, dx: 0, dy: 1 },
+    { x: 0, y: 0, dx: -1, dy: -1 },
+    { x: 5, y: 0, dx: 1, dy: -1 },
+    { x: 0, y: 5, dx: -1, dy: 1 },
+    { x: 5, y: 5, dx: 1, dy: 1 },
+  ];
+  for (const [index, edge] of edges.entries()) {
+    await seedBoard(pair, (state) => {
+      state.pieces[0].kind = index % 2 ? "cat" : "kitten";
+      state.pieces[8].kind = index % 2 ? "cat" : "kitten";
+      state.pieces[8].pos = { x: edge.x, y: edge.y };
+    });
+    for (const page of [pair.host, pair.guest]) await inspectMotion(page);
+    if (index % 2)
+      await pair.host
+        .getByRole("button", { name: /Cat 1 in your pool/ })
+        .click();
+    await pair.host
+      .locator(`[data-x="${edge.x - edge.dx}"][data-y="${edge.y - edge.dy}"]`)
+      .click();
+    for (const page of [pair.host, pair.guest]) {
+      await expect
+        .poll(() => page.evaluate(() => window.motionLog.length))
+        .toBe(1);
+      const cell = await page
+        .locator(`[data-x="${edge.x}"][data-y="${edge.y}"]`)
+        .boundingBox();
+      await finishMotion(page, 0);
+      await expect
+        .poll(() => page.evaluate(() => window.motionLog.length))
+        .toBe(2);
+      await page.evaluate(() => {
+        window.motionLog[1].animation.currentTime = 750 * 0.7;
+      });
+      const frame = await page.evaluate(() => {
+        const node = window.motionLog[1].node;
+        const rect = node.getBoundingClientRect();
+        return {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+          opacity: getComputedStyle(node).opacity,
+          connected: node.isConnected,
+          transform: getComputedStyle(node).transform,
+          width: document.documentElement.scrollWidth,
+        };
+      });
+      expect(frame.connected).toBe(true);
+      expect(Number(frame.opacity)).toBe(1);
+      if (edge.dx)
+        expect((frame.x - cell.x - cell.width / 2) * edge.dx).toBeGreaterThan(
+          cell.width / 2,
+        );
+      if (edge.dy)
+        expect((frame.y - cell.y - cell.height / 2) * edge.dy).toBeGreaterThan(
+          cell.height / 2,
+        );
+      expect(frame.transform).not.toMatch(/^matrix\(1, 0, 0, 1,/);
+      expect(frame.width).toBeLessThanOrEqual(390);
+      if (index === 5 && page === pair.host)
+        await page.screenshot({
+          path: `test-results/${testInfo.project.name}-diagonal-tumble.png`,
+        });
+      await finishMotion(page, 1);
+      await expect(page.locator('.piece[data-piece="8"]')).toHaveCount(0);
+      await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+    }
+    const saved = await (
+      await pair.host.request.get(`/api/games/${pair.id}`)
+    ).json();
+    expect(saved.game.state.pieces[8].pos).toBeNull();
+  }
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("automatic graduation follows placement and visibly returns adult cats to the pool", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, (state) => {
+    state.pieces[0].kind = "cat";
+    for (let id = 0; id < 3; id++) state.pieces[id].pos = { x: id, y: 0 };
+  });
+  for (const page of [pair.host, pair.guest]) await inspectMotion(page);
+  await pair.host
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  for (const page of [pair.host, pair.guest]) {
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    await finishMotion(page, 0);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(4);
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(1))
+        animation.currentTime = 600 * 0.45;
+    });
+    for (let id = 0; id < 3; id++) {
+      const node = page.locator(`.piece[data-piece="${id}"]`);
+      await expect(node).toHaveClass(/cat/);
+      await expect(node.locator("img")).toHaveAttribute("src", "/adult.svg");
+      const r = await node.boundingBox();
+      const cell = await page
+        .locator(`[data-x="${id}"][data-y="0"]`)
+        .boundingBox();
+      expect(r.y).toBeLessThan(cell.y - 5);
+      expect(r.height).toBeGreaterThan(cell.height);
+    }
+    if (page === pair.host)
+      await page.screenshot({
+        path: `test-results/${testInfo.project.name}-graduation-bounce.png`,
+      });
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(1)) animation.finish();
+    });
+    await expect(page.locator(".piece")).toHaveCount(1);
+    await expect(page.locator(".owner-0.player-card")).toContainText(
+      "3 cats in pool",
+    );
+    await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+  }
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("navigation cancels motion and returning shows the saved position without replay", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, () => {});
+  await inspectMotion(pair.host);
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  await expect
+    .poll(() => pair.host.evaluate(() => window.motionLog.length))
+    .toBe(1);
+  await pair.host.getByRole("link", { name: "Your games" }).click();
+  await expect(
+    pair.host.getByRole("button", { name: "Start a game" }),
+  ).toBeVisible();
+  expect(
+    await pair.host.evaluate(() => window.motionLog[0].animation.playState),
+  ).toBe("idle");
+  await pair.host.locator(`a[href="/game/${pair.id}"]`).click();
+  await expect(
+    pair.host.getByRole("button", { name: /C3:.*kitten/ }),
+  ).toBeVisible();
+  await expect(pair.host.locator("#app")).toHaveAttribute("aria-busy", "false");
+  expect(await pair.host.evaluate(() => window.motionLog.length)).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("reduced motion can cancel a bounce and future turns appear immediately", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, () => {});
+  await inspectMotion(pair.host);
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  await expect
+    .poll(() => pair.host.evaluate(() => window.motionLog.length))
+    .toBe(1);
+  await pair.host.emulateMedia({ reducedMotion: "reduce" });
+  await expect(pair.host.locator("#app")).toHaveAttribute("aria-busy", "false");
+  expect(
+    await pair.host.evaluate(() => window.motionLog[0].animation.playState),
+  ).toBe("idle");
+  await pair.guest
+    .getByRole("button", { name: "D3: Empty", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("button", { name: /B3:.*kitten/ }),
+  ).toBeVisible();
+  expect(await pair.host.evaluate(() => window.motionLog.length)).toBe(1);
+  await expect(pair.host.locator('[data-x="5"][data-y="5"]')).toBeEnabled();
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("multiple neighbors hop together after landing", async ({ browser }) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, (state) => {
+    state.pieces[8].pos = { x: 1, y: 2 };
+    state.pieces[9].pos = { x: 3, y: 2 };
+  });
+  for (const page of [pair.host, pair.guest]) await inspectMotion(page);
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  for (const page of [pair.host, pair.guest]) {
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    await finishMotion(page, 0);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(3);
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(1))
+        animation.currentTime = 750 * 0.4;
+    });
+    for (const [id, x, dx] of [
+      [8, 1, -1],
+      [9, 3, 1],
+    ]) {
+      const cell = await page
+        .locator(`[data-x="${x}"][data-y="2"]`)
+        .boundingBox();
+      const r = await page.locator(`.piece[data-piece="${id}"]`).boundingBox();
+      expect((r.x - cell.x) * dx).toBeGreaterThan(5);
+      expect(r.y).toBeLessThan(cell.y - 5);
+    }
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(1)) animation.finish();
+    });
+    await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+    await expect(
+      page.getByRole("button", { name: /A3:.*kitten/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /E3:.*kitten/ }),
+    ).toBeVisible();
+  }
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("hiding the page cancels motion and resumes from the saved board", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, () => {});
+  await inspectMotion(pair.host);
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  await expect
+    .poll(() => pair.host.evaluate(() => window.motionLog.length))
+    .toBe(1);
+  // Headless contexts do not hide tabs; deliver the same visibility state/event
+  // as a phone sleeping, while exercising the real cancellation/reconnect code.
+  await pair.host.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      value: true,
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(pair.host.locator("#connection")).toContainText("Reconnecting");
+  expect(
+    await pair.host.evaluate(() => window.motionLog[0].animation.playState),
+  ).toBe("idle");
+  await expect(
+    pair.host.getByRole("button", { name: /C3:.*kitten/ }),
+  ).toBeVisible();
+  await pair.host.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(pair.host.locator("#connection")).toContainText("Connected");
+  await expect(pair.host.locator("#app")).toHaveAttribute("aria-busy", "false");
+  expect(await pair.host.evaluate(() => window.motionLog.length)).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});

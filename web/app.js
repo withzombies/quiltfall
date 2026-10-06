@@ -16,6 +16,8 @@ let source = null;
 let connected = false;
 let busy = false;
 let animating = false;
+let motionController = null;
+let routeEpoch = 0;
 let selectedKind = "kitten";
 let selectedOption = 0;
 let updates = Promise.resolve();
@@ -190,6 +192,16 @@ function position(node, pos) {
 
 function renderGame() {
   if (!current) return;
+  if (animating) {
+    lockMoves();
+    return;
+  }
+  const existing = new Map(
+    [...root.querySelectorAll(".piece")].map((node) => [
+      Number(node.dataset.piece),
+      node,
+    ]),
+  );
   root.setAttribute("aria-busy", String(busy || animating));
   const { state, players } = current.game;
   const finished = state.phase.type === "finished";
@@ -221,7 +233,7 @@ function renderGame() {
     <div class="game-nav"><a href="/">← Your games</a><span class="connection ${connected ? "" : "offline"}" id="connection">${connected ? "Connected · game saved" : "Reconnecting…"}</span></div>
     <div class="players">${playerCard(0)}<span class="versus">&amp;</span>${playerCard(1)}</div>
     <div class="game-status" aria-live="polite"><h1>${escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
-    <div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div>
+    <div class="motion-viewport"><div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div></div>
     <div class="board-footnote"><span>A LITTLE NUDGE GOES A LONG WAY</span><span>MOVE ${state.move_count}</span></div>
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
     ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/game/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
@@ -247,7 +259,11 @@ function renderGame() {
   </section>`;
   const layer = document.querySelector(".pieces-layer");
   for (const piece of state.pieces.filter((p) => p.pos)) {
-    const node = pieceNode(piece);
+    const node = existing.get(piece.id) ?? pieceNode(piece);
+    if (!node.classList.contains(piece.kind)) {
+      node.className = `piece ${piece.kind}`;
+      node.innerHTML = cat(piece.kind, piece.owner);
+    }
     position(node, piece.pos);
     layer.append(node);
   }
@@ -293,92 +309,181 @@ function pieceNode(piece) {
   return node;
 }
 
-async function animateEffects(previous, next) {
-  const layer = document.querySelector(".pieces-layer");
+function lockMoves() {
+  root.setAttribute("aria-busy", "true");
+  root
+    .querySelectorAll(".square, .pick, .option, #graduate, #resign")
+    .forEach((node) => {
+      node.disabled = true;
+    });
+}
+
+function stopMotion() {
+  motionController?.abort();
+  motionController = null;
+  animating = false;
+}
+
+async function animateEffects(next, signal) {
+  const layer = root.querySelector(".pieces-layer");
   if (!layer) return;
   const size = layer.getBoundingClientRect().width / 6;
-  const groups = new Map();
-  for (const effect of next.effects) {
-    if (!groups.has(effect.piece)) groups.set(effect.piece, []);
-    groups.get(effect.piece).push(effect);
+  const placed = next.effects.find((effect) => effect.motion === "place");
+  const frame = (
+    offset,
+    x,
+    y,
+    sx = 1,
+    sy = 1,
+    rotation = 0,
+    opacity = 1,
+    easing = "ease-in-out",
+  ) => ({
+    offset,
+    transform: `translate(${x * size}px, ${y * size}px) rotate(${rotation}deg) scale(${sx}, ${sy})`,
+    opacity,
+    easing,
+  });
+  for (const motion of ["place", "nudge", "graduate"]) {
+    if (signal.aborted || !layer.isConnected) return;
+    await Promise.all(
+      next.effects
+        .filter((effect) => effect.motion === motion)
+        .map(async (effect) => {
+          const piece = next.game.state.pieces[effect.piece];
+          let node = layer.querySelector(`[data-piece="${effect.piece}"]`);
+          if (!node) {
+            node = pieceNode({ ...piece, kind: effect.kind });
+            layer.append(node);
+          }
+          position(node, effect.from ?? effect.to);
+          let keyframes;
+          let duration;
+          if (motion === "place") {
+            duration = 650;
+            keyframes = [
+              frame(0, 0, -1.35, 0.85, 1.1, -12),
+              frame(0.42, 0, 0.08, 1.2, 0.78, 0, 1, "ease-out"),
+              frame(0.65, 0, -0.38, 0.92, 1.1, 7),
+              frame(0.84, 0, 0.02, 1.07, 0.94),
+              frame(1, 0, 0),
+            ];
+          } else if (motion === "nudge") {
+            duration = 750;
+            const dx = effect.to
+              ? effect.to.x - effect.from.x
+              : effect.from.x - placed.to.x;
+            const dy = effect.to
+              ? effect.to.y - effect.from.y
+              : effect.from.y - placed.to.y;
+            if (effect.to) {
+              keyframes = [
+                frame(0, 0, 0),
+                frame(0.15, -dx * 0.08, -dy * 0.08, 1.12, 0.88),
+                frame(0.4, dx * 0.5, dy * 0.5 - 0.38, 0.92, 1.08, dx * 12),
+                frame(0.7, dx * 1.1, dy * 1.1, 1.15, 0.85, 0, 1, "ease-out"),
+                frame(0.85, dx, dy - 0.12, 0.96, 1.04),
+                frame(1, dx, dy),
+              ];
+            } else {
+              const spin = (dx || dy) * 100;
+              keyframes = [
+                frame(0, 0, 0),
+                frame(0.15, -dx * 0.08, -dy * 0.08, 1.12, 0.88),
+                frame(0.45, dx * 0.75, dy * 0.75 - 0.28, 1, 1, spin * 0.35),
+                frame(0.7, dx * 1.35, dy * 1.35 + 0.12, 0.92, 0.92, spin * 0.7),
+                frame(
+                  1,
+                  dx * 1.7,
+                  dy * 1.7 + 0.5,
+                  0.65,
+                  0.65,
+                  spin,
+                  0,
+                  "ease-in",
+                ),
+              ];
+            }
+          } else {
+            duration = 600;
+            node.className = `piece ${effect.kind}`;
+            node.innerHTML = cat(effect.kind, piece.owner);
+            const pool = root.querySelector(
+              `.player-card.owner-${piece.owner} .player-pool`,
+            );
+            const rect = pool.getBoundingClientRect();
+            const origin = node.getBoundingClientRect();
+            const dx =
+              (rect.x + rect.width / 2 - origin.x - origin.width / 2) / size;
+            const dy =
+              (rect.y + rect.height / 2 - origin.y - origin.height / 2) / size;
+            keyframes = [
+              frame(0, 0, 0),
+              frame(0.2, 0, 0.06, 1.15, 0.85),
+              frame(0.45, 0, -0.45, 1.18, 1.18, piece.owner ? 12 : -12),
+              frame(0.75, dx * 0.55, dy * 0.55 - 0.25, 0.7, 0.7, 0, 0.9),
+              frame(1, dx, dy, 0.2, 0.2, 0, 0),
+            ];
+          }
+          const animation = node.animate(keyframes, {
+            duration,
+            fill: "both",
+            easing: "linear",
+          });
+          const cancel = () => animation.cancel();
+          signal.addEventListener("abort", cancel, { once: true });
+          try {
+            await animation.finished;
+            if (effect.to) position(node, effect.to);
+            else node.remove();
+          } finally {
+            signal.removeEventListener("abort", cancel);
+            animation.cancel();
+          }
+        }),
+    );
   }
-  await Promise.all(
-    [...groups.entries()].map(async ([id, effects]) => {
-      const piece = next.game.state.pieces[id];
-      let node = layer.querySelector(`[data-piece="${id}"]`);
-      if (!node) {
-        node = pieceNode(piece);
-        layer.append(node);
-      }
-      for (const effect of effects) {
-        const from = effect.from ?? { x: effect.to.x, y: 6.2 };
-        const to = effect.to ?? {
-          x: from.x === 0 ? -1 : from.x === 5 ? 6 : from.x,
-          y: from.x === 0 || from.x === 5 ? from.y : from.y === 0 ? -1 : 6.2,
-        };
-        const graduating =
-          !effect.to &&
-          effect.kind === "cat" &&
-          previous.game.state.pieces[id].kind === "kitten";
-        node.className = `piece ${effect.kind}`;
-        node.innerHTML = cat(effect.kind, piece.owner);
-        position(node, to);
-        await node.animate(
-          [
-            {
-              transform: `translate(${(from.x - to.x) * size}px, ${(from.y - to.y) * size}px) scale(${effect.from ? 1 : 0.4})`,
-              opacity: 1,
-            },
-            {
-              transform: `translate(${(from.x - to.x) * size * 0.5}px, ${(from.y - to.y) * size * 0.5}px) scale(${graduating ? 1.25 : 1})`,
-              opacity: 1,
-              offset: 0.5,
-            },
-            {
-              transform: "translate(0, 0) scale(1)",
-              opacity: effect.to ? 1 : 0,
-            },
-          ],
-          {
-            duration: graduating ? 330 : 240,
-            easing: "cubic-bezier(.2,.8,.2,1)",
-            fill: "forwards",
-          },
-        ).finished;
-      }
-    }),
-  );
 }
 
 function enqueue(next, animate = true) {
-  updates = updates
-    .then(async () => {
-      if (gameId !== next.game.id || !acceptSnapshot(current, next)) return;
-      const previous = current;
-      const sameTurn = previous?.game.state.turn === next.game.state.turn;
-      current = next;
-      if (!sameTurn) selectedOption = 0;
-      const shouldAnimate =
-        animate &&
-        !reducedMotion.matches &&
-        previous &&
-        next.game.revision === previous.game.revision + 1 &&
-        next.effects.length;
-      animating = Boolean(shouldAnimate);
-      renderGame();
-      if (shouldAnimate) {
-        try {
-          await animateEffects(previous, next);
-        } finally {
+  const epoch = routeEpoch;
+  updates = updates.then(async () => {
+    if (
+      epoch !== routeEpoch ||
+      gameId !== next.game.id ||
+      !acceptSnapshot(current, next)
+    )
+      return;
+    const previous = current;
+    const sameTurn = previous?.game.state.turn === next.game.state.turn;
+    current = next;
+    if (!sameTurn) selectedOption = 0;
+    const shouldAnimate =
+      animate &&
+      !reducedMotion.matches &&
+      !document.hidden &&
+      previous &&
+      next.game.revision === previous.game.revision + 1 &&
+      next.effects.length;
+    if (shouldAnimate) {
+      const controller = new AbortController();
+      motionController = controller;
+      animating = true;
+      lockMoves();
+      try {
+        await animateEffects(next, controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted)
+          console.error("Piece animation failed", error);
+      } finally {
+        if (motionController === controller) {
+          motionController = null;
           animating = false;
-          if (gameId === next.game.id) renderGame();
+          if (epoch === routeEpoch && gameId === next.game.id) renderGame();
         }
       }
-    })
-    .catch(() => {
-      animating = false;
-      if (current && gameId === current.game.id) renderGame();
-    });
+    } else renderGame();
+  });
   return updates;
 }
 
@@ -387,7 +492,7 @@ async function submit(action) {
   busy = true;
   const id = gameId;
   const revision = current.game.revision;
-  renderGame();
+  lockMoves();
   try {
     await enqueue(await api(`/api/games/${id}/actions`, { revision, action }));
   } catch (error) {
@@ -441,10 +546,23 @@ async function copyInvite() {
     await navigator.clipboard.writeText(input.value);
     message("Invite copied. Send it to your person.");
   } catch {
-    input.focus();
+    if (!input.isConnected) return;
+    input.focus({ preventScroll: true });
     input.select();
     input.setSelectionRange(0, input.value.length);
-    message("Link selected. Touch and hold to copy it.");
+    let copied = false;
+    try {
+      // Local HTTP lacks the secure Clipboard API. This command still works
+      // during the tap in browsers that support the legacy copy operation.
+      copied = document.execCommand("copy");
+    } catch {
+      // Leave the entire link selected when the browser refuses both paths.
+    }
+    message(
+      copied
+        ? "Invite copied. Send it to your person."
+        : "Your browser blocked copying. Link selected — touch and hold to copy.",
+    );
   }
 }
 
@@ -467,6 +585,8 @@ function confirmResignation() {
 }
 
 async function route() {
+  const epoch = ++routeEpoch;
+  stopMotion();
   source?.close();
   connected = false;
   current = null;
@@ -481,7 +601,7 @@ async function route() {
   root.innerHTML = '<p class="loading">Fluffing the pillows…</p>';
   try {
     await loadProfile();
-    if (gameId !== id) return;
+    if (epoch !== routeEpoch || gameId !== id) return;
     if (!id) {
       renderHome();
       return;
@@ -532,6 +652,8 @@ document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     source?.close();
     connected = false;
+    stopMotion();
+    if (current) renderGame();
   } else {
     connected = false;
     if (!animating) renderGame();
@@ -547,3 +669,16 @@ window.addEventListener("offline", () => {
   if (current && !animating) renderGame();
 });
 route();
+
+reducedMotion.addEventListener("change", () => {
+  if (reducedMotion.matches && animating) {
+    stopMotion();
+    renderGame();
+  }
+});
+window.addEventListener("resize", () => {
+  if (animating) {
+    stopMotion();
+    renderGame();
+  }
+});

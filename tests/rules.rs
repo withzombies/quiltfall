@@ -326,3 +326,65 @@ fn resignation_finishes_and_finished_games_reject_actions() {
     );
     assert!(done.apply(0, Action::Resign).is_err());
 }
+
+#[test]
+fn effects_distinguish_placement_nudges_and_adult_graduation() {
+    let mut g = GameState::new(0);
+    put(&mut g, 1, Kind::Cat, 0, 0);
+    let transition = g.apply(
+        0,
+        Action::Place {
+            kind: Kind::Cat,
+            x: 1,
+            y: 1,
+        },
+    );
+    // Make a cat available to place.
+    assert!(transition.is_err());
+    g.pieces[0].kind = Kind::Cat;
+    let transition = g
+        .apply(
+            0,
+            Action::Place {
+                kind: Kind::Cat,
+                x: 1,
+                y: 1,
+            },
+        )
+        .unwrap();
+    let effects = serde_json::to_value(&transition.effects).unwrap();
+    assert_eq!(effects[0]["motion"], "place");
+    assert_eq!(effects[1]["motion"], "nudge");
+    assert!(effects[1]["to"].is_null());
+
+    let mut g = GameState::new(0);
+    let adult = put(&mut g, 0, Kind::Cat, 0, 0);
+    put(&mut g, 0, Kind::Kitten, 2, 0);
+    let t = g
+        .apply(
+            0,
+            Action::Place {
+                kind: Kind::Kitten,
+                x: 4,
+                y: 4,
+            },
+        )
+        .unwrap();
+    let mut state = t.state;
+    state.turn = 0;
+    state.phase = Phase::Graduation {
+        options: vec![vec![adult]],
+    };
+    let t = state
+        .apply(
+            0,
+            Action::Graduate {
+                pieces: vec![adult],
+            },
+        )
+        .unwrap();
+    let effects = serde_json::to_value(&t.effects).unwrap();
+    assert_eq!(effects[0]["motion"], "graduate");
+    assert_eq!(effects[0]["kind"], "cat");
+    assert!(effects[0]["to"].is_null());
+}

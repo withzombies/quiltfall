@@ -38,7 +38,9 @@ same browser share one player identity.
 - Pick a kitten or cat, then tap an empty square. Moves are immediate and final.
 - Choose one graduation when several options are available. Highlighted pieces
   make the choice visible before confirmation.
-- Placement, nudge, fall-off, graduation and win animations. Reduced-motion
+- Bouncy placements, simultaneous hopping nudges, rotating off-bed tumbles,
+  graduation and win animations. A placement followed by nudges takes about
+  1.4 seconds. Reduced-motion
   preferences are respected.
 - Saved games that survive phone sleep, refresh and server restart.
 - Ongoing games, past results, games played, wins and losses. Resignation counts
@@ -47,8 +49,9 @@ same browser share one player identity.
   its player. Clearing it, using private browsing, switching browser, or changing
   host address creates a new identity; names alone do not recover a player.
 
-The Copy link button uses the clipboard when available. On local HTTP, it may
-select the link instead: touch and hold to copy it manually. Share invitations
+The Copy link button uses the Clipboard API when available and a browser copy
+fallback on local HTTP. If both operations are blocked, it explains that copying
+failed and selects the entire link: touch and hold to copy it manually. Share invitations
 privately; the first invited person to explicitly join gets the second seat.
 
 ## Configuration and saves

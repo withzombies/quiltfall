@@ -51,12 +51,21 @@ pub enum Action {
     Resign,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Motion {
+    Place,
+    Nudge,
+    Graduate,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Effect {
     pub piece: u8,
     pub from: Option<Pos>,
     pub to: Option<Pos>,
     pub kind: Kind,
+    pub motion: Motion,
 }
 
 pub struct Transition {
@@ -117,7 +126,7 @@ impl GameState {
                     .iter()
                     .position(|p| p.owner == actor && p.kind == kind && p.pos.is_none())
                     .ok_or("You have no pieces of that kind in your pool.")?;
-                state.move_piece(index, Some(pos), kind, &mut effects);
+                state.move_piece(index, Some(pos), kind, Motion::Place, &mut effects);
                 // Use the board after placement but before any nudges: all pushes
                 // happen simultaneously and never propagate to other pieces.
                 let placed = state.clone();
@@ -143,6 +152,7 @@ impl GameState {
                                     i,
                                     target.on_bed().then_some(target),
                                     neighbor.kind,
+                                    Motion::Nudge,
                                     &mut effects,
                                 );
                             }
@@ -177,13 +187,21 @@ impl GameState {
         self.pieces.iter().position(|p| p.pos == Some(pos))
     }
 
-    fn move_piece(&mut self, index: usize, to: Option<Pos>, kind: Kind, effects: &mut Vec<Effect>) {
+    fn move_piece(
+        &mut self,
+        index: usize,
+        to: Option<Pos>,
+        kind: Kind,
+        motion: Motion,
+        effects: &mut Vec<Effect>,
+    ) {
         let piece = &mut self.pieces[index];
         effects.push(Effect {
             piece: piece.id,
             from: piece.pos,
             to,
             kind,
+            motion,
         });
         piece.pos = to;
         piece.kind = kind;
@@ -260,7 +278,7 @@ impl GameState {
 
     fn graduate(&mut self, ids: &[u8], effects: &mut Vec<Effect>) {
         for id in ids {
-            self.move_piece(*id as usize, None, Kind::Cat, effects);
+            self.move_piece(*id as usize, None, Kind::Cat, Motion::Graduate, effects);
         }
     }
 
