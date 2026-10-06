@@ -210,16 +210,40 @@ function renderGame() {
   if (counts[selectedKind] === 0)
     selectedKind = counts.kitten ? "kitten" : "cat";
   const options = state.phase.type === "graduation" ? state.phase.options : [];
-  selectedOption = Math.min(selectedOption, Math.max(0, options.length - 1));
+  const singles = new Set(
+    options.filter((ids) => ids.length === 1).map((ids) => ids[0]),
+  );
+  const groups = options
+    .map((ids, index) => ({ ids, index }))
+    .filter((option) => option.ids.length > 1);
+  if (!groups.some((option) => option.index === selectedOption)) {
+    selectedOption = groups[0]?.index ?? -1;
+  }
   const selected = options[selectedOption] ?? [];
   const eligible = !busy && !animating && connected;
+  const yourGraduation =
+    state.phase.type === "graduation" && state.turn === current.you;
+  const mixed = [...singles].some((id) => state.pieces[id].kind === "cat");
+  const graduationHint = !yourGraduation
+    ? "Your partner is choosing which pieces to return."
+    : singles.size
+      ? groups.length
+        ? "Tap one piece to return it, or choose a group below. Kittens become cats; cats return to your pool."
+        : mixed
+          ? "Your quilt is full. Tap one of your pieces. Kittens become cats; cats return to your pool."
+          : "Your quilt is full. Tap a kitten to upgrade it."
+      : "Select one group below. The highlighted pieces return to your pool.";
   let squares = "";
   for (let y = 0; y < 6; y++) {
     for (let x = 0; x < 6; x++) {
       const p = state.pieces.find((p) => p.pos?.x === x && p.pos?.y === y);
       const highlighted = p && selected.includes(p.id);
       const available = eligible && canPlace(current, selectedKind, x, y);
-      squares += `<button class="square ${available ? "available" : ""} ${highlighted ? "chosen" : ""}" data-x="${x}" data-y="${y}" aria-label="${escape(cellLabel(current, x, y))}" ${available ? "" : "disabled"}></button>`;
+      const upgradeable = eligible && yourGraduation && p && singles.has(p.id);
+      const action = upgradeable
+        ? ` — ${p.kind === "cat" ? "Return cat" : "Upgrade kitten"}`
+        : "";
+      squares += `<button class="square ${available ? "available" : ""} ${upgradeable ? "upgradeable" : ""} ${highlighted ? "chosen" : ""}" data-x="${x}" data-y="${y}" ${upgradeable ? `data-upgrade="${p.id}"` : ""} aria-label="${escape(cellLabel(current, x, y) + action)}" ${available || upgradeable ? "" : "disabled"}></button>`;
     }
   }
   const subtitle = waiting
@@ -227,7 +251,7 @@ function renderGame() {
     : finished
       ? `Finished in ${state.move_count} moves. Saved to your past games.`
       : state.phase.type === "graduation"
-        ? "Select one option below. The highlighted pieces return to your pool."
+        ? graduationHint
         : `Tap an empty square to place a ${selectedKind}. Moves are final.`;
   root.innerHTML = `<section class="game-page">
     <div class="game-nav"><a href="/">← Your games</a><span class="connection ${connected ? "" : "offline"}" id="connection">${connected ? "Connected · game saved" : "Reconnecting…"}</span></div>
@@ -238,11 +262,11 @@ function renderGame() {
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
     ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/game/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
     ${
-      options.length && state.turn === current.you
-        ? `<div class="graduation"><p>Pick one group to return to your pool.</p><div class="graduation-options">${options
+      groups.length && state.turn === current.you
+        ? `<div class="graduation"><p>Pick one group to return to your pool.</p><div class="graduation-options">${groups
             .map(
-              (ids, i) =>
-                `<button class="option ${i === selectedOption ? "selected" : ""}" data-option="${i}" ${eligible ? "" : "disabled"}>${ids.length === 1 ? "Retrieve" : "Graduate"} ${ids
+              ({ ids, index }) =>
+                `<button class="option ${index === selectedOption ? "selected" : ""}" data-option="${index}" ${eligible ? "" : "disabled"}>Graduate ${ids
                   .map((id) => {
                     const pos = state.pieces[id].pos;
                     return `${String.fromCharCode(65 + pos.x)}${pos.y + 1}`;
@@ -284,6 +308,13 @@ function renderGame() {
       renderGame();
     }),
   );
+  document
+    .querySelectorAll("[data-upgrade]")
+    .forEach((square) =>
+      square.addEventListener("click", () =>
+        submit({ type: "graduate", pieces: [Number(square.dataset.upgrade)] }),
+      ),
+    );
   document.querySelectorAll("[data-option]").forEach((button) =>
     button.addEventListener("click", () => {
       selectedOption = Number(button.dataset.option);

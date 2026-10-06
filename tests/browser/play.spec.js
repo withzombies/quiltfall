@@ -651,3 +651,166 @@ test("hiding the page cancels motion and resumes from the saved board", async ({
   await pair.hostContext.close();
   await pair.guestContext.close();
 });
+
+const sevenPositions = [
+  [0, 0],
+  [2, 0],
+  [4, 0],
+  [1, 2],
+  [3, 2],
+  [5, 2],
+  [0, 4],
+];
+
+async function fullQuiltChoice(pair, mixed = false) {
+  await seedBoard(pair, (state) => {
+    sevenPositions.forEach(([x, y], id) => {
+      state.pieces[id].pos = { x, y };
+    });
+    if (mixed) state.pieces[0].kind = "cat";
+    state.pieces[8].pos = { x: 5, y: 0 };
+  });
+  await pair.host
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  await expect(pair.host.locator("#app")).toHaveAttribute("aria-busy", "false");
+  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
+}
+
+test("the eighth kitten lets you tap a piece directly after refresh", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  await fullQuiltChoice(pair);
+  await expect(pair.host.locator(".game-status")).toContainText(
+    "Your quilt is full. Tap a kitten to upgrade it.",
+  );
+  await expect(pair.host.locator(".option")).toHaveCount(0);
+  await expect(pair.host.locator("#graduate")).toHaveCount(0);
+  await expect(pair.host.locator(".square.chosen")).toHaveCount(0);
+  await expect(pair.host.locator('[data-x="5"][data-y="0"]')).toBeDisabled();
+  await expect(pair.host.locator('[data-x="5"][data-y="3"]')).toBeDisabled();
+  await expect(pair.guest.locator(".square:enabled")).toHaveCount(0);
+  await pair.host.reload();
+  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
+  await pair.hostContext.setOffline(true);
+  await expect(pair.host.locator("#connection")).toContainText("Reconnecting");
+  await expect(pair.host.locator(".square:enabled")).toHaveCount(0);
+  await pair.hostContext.setOffline(false);
+  await expect(pair.host.locator("#connection")).toContainText("Connected");
+  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
+  expect(
+    (await new AxeBuilder({ page: pair.host }).analyze()).violations,
+  ).toEqual([]);
+  await pair.host.screenshot({
+    path: `test-results/${testInfo.project.name}-tap-upgrade.png`,
+  });
+  const before = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  let submissions = 0;
+  pair.host.on("request", (request) => {
+    if (
+      request.url().endsWith(`/api/games/${pair.id}/actions`) &&
+      request.method() === "POST"
+    )
+      submissions++;
+  });
+  // Two rapid activation attempts must commit only one graduation.
+  await pair.host.locator('[data-x="2"][data-y="0"]').evaluate((node) => {
+    node.addEventListener("click", () => node.click(), { once: true });
+  });
+  await pair.host.locator('[data-x="2"][data-y="0"]').tap();
+  await expect(pair.host.locator("#app")).toHaveAttribute("aria-busy", "false");
+  await expect(pair.host.locator(".square.upgradeable")).toHaveCount(0);
+  await expect(pair.guest.locator(".owner-0.player-card")).toContainText(
+    "1 cats in pool",
+  );
+  const after = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(after.game.state.pieces[1].kind).toBe("cat");
+  expect(after.game.state.pieces[1].pos).toBeNull();
+  expect(after.game.revision).toBe(before.game.revision + 1);
+  expect(after.game.state.turn).toBe(1);
+  expect(submissions).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("mixed full quilts allow an adult return with keyboard activation", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await fullQuiltChoice(pair, true);
+  await expect(pair.host.locator(".game-status")).toContainText(
+    "Kittens become cats; cats return to your pool.",
+  );
+  const target = pair.host.locator('[data-x="0"][data-y="0"]');
+  await expect(target).toHaveAccessibleName(/Return cat/);
+  await target.focus();
+  await pair.host.keyboard.press("Enter");
+  await expect(pair.guest.locator(".owner-0.player-card")).toContainText(
+    "1 cats in pool",
+  );
+  const after = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(after.game.state.pieces[0].kind).toBe("cat");
+  expect(after.game.state.pieces[0].pos).toBeNull();
+  expect(
+    after.game.state.pieces.filter((p) => p.owner === 0 && p.pos),
+  ).toHaveLength(7);
+  expect(after.game.state.turn).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("full quilts keep triple choices alongside direct piece taps", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, (state) => {
+    // Pre-existing triple is resolved by the actual eighth placement.
+    const positions = [
+      [0, 0],
+      [1, 0],
+      [2, 0],
+      [4, 0],
+      [1, 2],
+      [3, 2],
+      [5, 2],
+    ];
+    positions.forEach(([x, y], id) => {
+      state.pieces[id].pos = { x, y };
+    });
+  });
+  await pair.host
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
+  await expect(pair.host.locator(".option")).toHaveCount(1);
+  await expect(pair.host.locator(".square.chosen")).toHaveCount(3);
+  await expect(pair.host.locator(".game-status")).toContainText(
+    "Tap one piece to return it, or choose a group below.",
+  );
+  await pair.host
+    .getByRole("button", { name: "Confirm selection", exact: false })
+    .click();
+  await expect(pair.guest.locator(".owner-0.player-card")).toContainText(
+    "3 cats in pool",
+  );
+  const after = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(
+    after.game.state.pieces.filter(
+      (p) => p.owner === 0 && p.kind === "cat" && !p.pos,
+    ),
+  ).toHaveLength(3);
+  expect(after.game.state.turn).toBe(1);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});

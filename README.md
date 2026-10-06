@@ -36,8 +36,9 @@ same browser share one player identity.
 - A 6×6 quilt, eight kittens per player, graduation into cats, and both winning
   conditions. The server enforces the rules.
 - Pick a kitten or cat, then tap an empty square. Moves are immediate and final.
-- Choose one graduation when several options are available. Highlighted pieces
-  make the choice visible before confirmation.
+- When all eight pieces are on the quilt, tap a ringed kitten to upgrade it
+  immediately, or tap an adult cat to return it to your pool. Groups of three
+  still use highlighted selection and confirmation.
 - Bouncy placements, simultaneous hopping nudges, rotating off-bed tumbles,
   graduation and win animations. A placement followed by nudges takes about
   1.4 seconds. Reduced-motion
