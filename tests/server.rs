@@ -12,6 +12,50 @@ use quiltfall::{
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+#[tokio::test]
+async fn serves_the_phone_app_on_home_and_invite_urls() {
+    let (_, router) = app().await;
+    for path in ["/", "/game/a-private-invite"] {
+        let response = request(&router, "GET", path, "", json!(null)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains("Quiltfall"));
+        assert!(html.contains("viewport"));
+        assert!(html.contains("/vendor/open-props.min.css"));
+        assert!(html.contains("/vendor/animate.min.css"));
+    }
+    for (path, content_type) in [
+        ("/app.js", "text/javascript"),
+        ("/style.css", "text/css"),
+        ("/cat.svg", "image/svg+xml"),
+        ("/state.mjs", "text/javascript"),
+    ] {
+        let response = request(&router, "GET", path, "", json!(null)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with(content_type)
+        );
+    }
+    assert_eq!(
+        request(&router, "GET", "/missing", "", json!(null))
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
 async fn app() -> (App, Router) {
     let state = App::open("sqlite::memory:", false).await.unwrap();
     let router = router(state.clone());

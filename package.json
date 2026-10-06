@@ -1,0 +1,22 @@
+{
+  "name": "quiltfall",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/ui.test.mjs",
+    "lint": "eslint web/*.js web/*.mjs tests/ui.test.mjs tests/browser/*.js scripts/*.mjs *.js --max-warnings=0",
+    "vendor:css": "node scripts/vendor-css.mjs",
+    "format:check": "prettier --check web/*.js web/*.mjs web/*.css web/*.html tests/ui.test.mjs tests/browser/*.js scripts/*.mjs *.js",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "animate.css": "^4.1.1",
+    "eslint": "^10.12.0",
+    "globals": "^17.13.0",
+    "open-props": "^1.7.23",
+    "prettier": "^3.9.9"
+  }
+}

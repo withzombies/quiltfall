@@ -13,6 +13,24 @@ Rules implemented after missing-engine RED; 15 tests pass, build/fmt/Clippy pass
 Implement the persistence/HTTP layer from failing integration tests.
 Continue through the approved plan; update these docs at each slice boundary.
 
+Current slice: finish local hosting documentation, Dockerfile and optional Fly
+configuration. UI is complete. In-app browser discovery returned no browsers;
+used isolated local Playwright Chromium and WebKit instead. Six browser tests
+pass; screenshots reviewed at narrow-phone and board sizes. WebKit axe caught
+a selected-button contrast issue; darkened muted text, both browsers now pass.
+UI helpers were RED before implementation; six Node tests pass. Static app and
+CSS libraries were RED (missing routes/links) before implementation. Winner
+animation test was RED before adding Animate.css celebration.
+
+## Hosting research
+- https://fly.io/rust/
+- https://docs.fly.io/reference/configuration
+- https://docs.fly.io/flyctl/launch
+- https://docs.fly.io/volumes/overview
+Verified local flyctl help: launch supports --copy-config, --no-deploy and --ha;
+deploy supports --ha=false. Container can embed all assets without Node at runtime.
+Docker CLI is absent here, so actual container build cannot be verified locally.
+
 ## Persistence/HTTP research
 - https://docs.rs/axum/0.8.9/axum/response/sse/
 - https://docs.rs/sqlx/0.8.6/sqlx/sqlite/struct.SqliteConnectOptions.html
@@ -29,3 +47,12 @@ this is not a formal trademark clearance. Use original SVG illustrations and UI 
 Persistence GREEN: 10 integration tests pass, including competing joins, duplicate
 actions, member authorization, cookie reuse, SQLite restart with pending graduation,
 stats counted once, and SSE initial/committed snapshots. Fresh build/fmt/Clippy pass.
+
+## UI research
+- https://developer.mozilla.org/en-US/docs/Web/API/Element/animate
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/At-rules/@media/prefers-reduced-motion
+- https://developer.mozilla.org/en-US/docs/Web/API/Clipboard_API
+User requested CSS libraries and strong animations. Use locally vendored Open Props
+(tokens, easing, spacing, shadows) and Animate.css (entrances/celebration) with
+Web Animations API for physical piece movements. Sources: https://open-props.style/,
+https://animate.style/, https://github.com/argyleink/open-props.

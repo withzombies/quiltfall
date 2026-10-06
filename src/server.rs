@@ -132,6 +132,60 @@ impl App {
 
 pub fn router(app: App) -> Router {
     Router::new()
+        .route(
+            "/vendor/open-props.min.css",
+            get(|| async {
+                asset(
+                    "text/css; charset=utf-8",
+                    include_str!("../web/vendor/open-props.min.css"),
+                )
+            }),
+        )
+        .route(
+            "/vendor/animate.min.css",
+            get(|| async {
+                asset(
+                    "text/css; charset=utf-8",
+                    include_str!("../web/vendor/animate.min.css"),
+                )
+            }),
+        )
+        .route("/", get(index))
+        .route("/game/{id}", get(index))
+        .route(
+            "/app.js",
+            get(|| async {
+                asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../web/app.js"),
+                )
+            }),
+        )
+        .route(
+            "/state.mjs",
+            get(|| async {
+                asset(
+                    "text/javascript; charset=utf-8",
+                    include_str!("../web/state.mjs"),
+                )
+            }),
+        )
+        .route(
+            "/style.css",
+            get(|| async { asset("text/css; charset=utf-8", include_str!("../web/style.css")) }),
+        )
+        .route(
+            "/cat.svg",
+            get(|| async { asset("image/svg+xml", include_str!("../web/cat.svg")) }),
+        )
+        .route(
+            "/adult.svg",
+            get(|| async { asset("image/svg+xml", include_str!("../web/adult.svg")) }),
+        )
+        .route(
+            "/hero.svg",
+            get(|| async { asset("image/svg+xml", include_str!("../web/hero.svg")) }),
+        )
         .route("/api/me", get(me))
         .route("/api/games", post(create))
         .route("/api/games/{id}", get(read))
@@ -140,6 +194,23 @@ pub fn router(app: App) -> Router {
         .route("/api/games/{id}/events", get(events))
         .route("/health", get(|| async { "ok" }))
         .with_state(app)
+}
+
+async fn index() -> impl IntoResponse {
+    asset(
+        "text/html; charset=utf-8",
+        include_str!("../web/index.html"),
+    )
+}
+
+fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        body,
+    )
 }
 
 #[derive(Deserialize)]
