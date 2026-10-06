@@ -191,11 +191,40 @@ function position(node, pos) {
   node.style.top = `${(pos.y * 100) / 6}%`;
 }
 
+function renderRematchControls() {
+  const area = root.querySelector(".rematch-controls");
+  if (!area) return;
+  const key = `${current.game.revision}:${busy}:${connected}`;
+  if (area.dataset.controlsKey === key) return;
+  area.dataset.controlsKey = key;
+  const { requested_by, game_id } = current.game.rematch;
+  const partner = current.game.players[1 - current.you].name;
+  const disabled = busy || !connected ? "disabled" : "";
+  const button = (action, label, secondary = false) =>
+    `<button class="button ${secondary ? "secondary" : ""}" data-rematch-action="${action}" ${disabled}>${escape(label)}</button>`;
+  if (game_id) {
+    area.innerHTML = `<a class="button wide" href="/game/${escape(game_id)}">Open next game <span aria-hidden="true">→</span></a>`;
+  } else if (requested_by === current.you) {
+    area.innerHTML = `<p class="rematch-status">Waiting for ${escape(partner)}…</p>${button("cancel", "Cancel offer", true)}`;
+  } else if (requested_by !== null) {
+    area.innerHTML = `<p class="rematch-status">${escape(partner)} wants another round</p><div class="rematch-actions">${button("accept", "Play again")}${button("decline", "Not now", true)}</div>`;
+  } else {
+    area.innerHTML = button("request", `Play again with ${partner}`);
+  }
+  area.querySelectorAll("[data-rematch-action]").forEach((node) => {
+    node.addEventListener("click", () =>
+      submit(node.dataset.rematchAction, "rematch"),
+    );
+  });
+}
+
 function renderResult() {
-  const { state, players, id, revision } = current.game;
-  const key = `${id}:${revision}`;
-  // HTTP and SSE can deliver the same finish. Keep its dance mounted once.
-  if (root.querySelector(".result-card")?.dataset.resultKey === key) return;
+  const { state, players, id } = current.game;
+  // A finished board stays immutable while rematch offers advance its revision.
+  if (root.querySelector(".result-card")?.dataset.resultKey === id) {
+    renderRematchControls();
+    return;
+  }
   const winner = state.phase.winner;
   const name = players[winner].name;
   const won = winner === current.you;
@@ -209,7 +238,7 @@ function renderResult() {
     (_, i) =>
       `<i style="--i:${i};--x:${8 + ((i * 29) % 84)}%;--delay:${(i % 4) * 0.06}s"></i>`,
   ).join("");
-  root.innerHTML = `<section class="result-card result-screen animate__animated ${won ? "animate__bounceIn" : "animate__fadeIn"}" data-result-key="${escape(key)}">
+  root.innerHTML = `<section class="result-card result-screen animate__animated ${won ? "animate__bounceIn" : "animate__fadeIn"}" data-result-key="${escape(id)}">
     <span class="eyebrow">A QUILT WELL PLAYED</span>
     <h1 aria-live="polite">${won ? "You won the quilt!" : `${escape(name)} wins the quilt!`}</h1>
     <p class="result-copy">${won ? "A little victory. A lot of purrs." : "A lovely rivalry. There’s always another quilt."}</p>
@@ -221,9 +250,10 @@ function renderResult() {
     </div>
     <div class="winner-chip">${escape(name)} <span>· quilt champion</span></div>
     <p class="result-details"><span class="result-reason">${reason}</span> · ${state.move_count} moves</p>
-    <a class="button wide" href="/">Start another game →</a>
+    <div class="rematch-controls" aria-live="polite"></div>
     <div class="result-links"><button class="text-button" id="view-quilt">View final quilt</button><a href="/">Your games</a></div>
   </section>`;
+  renderRematchControls();
   document.querySelector("#view-quilt").addEventListener("click", () => {
     showFinalQuilt = true;
     renderGame();
@@ -303,6 +333,7 @@ function renderGame() {
     <div class="game-status" aria-live="polite"><h1>${finished ? "The final quilt" : escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
     <div class="motion-viewport"><div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div></div>
     <div class="board-footnote"><span>A LITTLE NUDGE GOES A LONG WAY</span><span>MOVE ${state.move_count}</span></div>
+    ${finished ? '<div class="rematch-controls" aria-live="polite"></div>' : ""}
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
     ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/game/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
     ${
@@ -324,6 +355,7 @@ function renderGame() {
     }
     ${!waiting && !finished ? '<div class="game-controls"><button class="text-button" id="resign">Resign this game</button><span class="text-button">Saved after every move</span></div>' : ""}
   </section>`;
+  if (finished) renderRematchControls();
   document.querySelector("#celebration-back")?.addEventListener("click", () => {
     showFinalQuilt = false;
     renderGame();
@@ -535,6 +567,17 @@ function enqueue(next, animate = true) {
     const previous = current;
     const sameTurn = previous?.game.state.turn === next.game.state.turn;
     current = next;
+    if (
+      previous &&
+      !previous.game.rematch.game_id &&
+      next.game.rematch.game_id
+    ) {
+      history.pushState({}, "", `/game/${next.game.rematch.game_id}`);
+      // route() enqueues the next game's snapshot; awaiting it here would
+      // deadlock this serial queue. Its epoch guards isolate the old stream.
+      route();
+      return;
+    }
     if (!sameTurn) selectedOption = 0;
     const shouldAnimate =
       animate &&
@@ -565,31 +608,45 @@ function enqueue(next, animate = true) {
   return updates;
 }
 
-async function submit(action) {
+async function submit(action, endpoint = "actions") {
   if (busy || animating || !connected || !current) return;
   busy = true;
   const id = gameId;
+  const epoch = routeEpoch;
   const revision = current.game.revision;
-  lockMoves();
+  if (endpoint === "rematch") renderGame();
+  else lockMoves();
   try {
-    await enqueue(await api(`/api/games/${id}/actions`, { revision, action }));
+    const next = await api(`/api/games/${id}/${endpoint}`, {
+      revision,
+      action,
+    });
+    if (epoch !== routeEpoch || gameId !== id) return;
+    await enqueue(next);
   } catch (error) {
+    if (epoch !== routeEpoch || gameId !== id) return;
     if (error.current) await enqueue(error.current, false);
     else {
-      // A response may be lost after a successful commit. Reload rather than
-      // retrying an action that might have already been accepted.
+      // A response may be lost after a successful commit. Read saved state
+      // before restoring controls, including the accepted next-game link.
       try {
-        await enqueue(await api(`/api/games/${id}`), false);
+        const saved = await api(`/api/games/${id}`);
+        if (epoch !== routeEpoch || gameId !== id) return;
+        await enqueue(saved, false);
       } catch {
+        if (epoch !== routeEpoch || gameId !== id) return;
         connected = false;
       }
     }
-    message(
-      error.message || "Connection interrupted. Checking your saved board…",
-    );
+    if (epoch === routeEpoch && gameId === id)
+      message(
+        error.message || "Connection interrupted. Checking your saved game…",
+      );
   } finally {
-    busy = false;
-    if (gameId === id) renderGame();
+    if (epoch === routeEpoch && gameId === id) {
+      busy = false;
+      renderGame();
+    }
   }
 }
 
@@ -597,20 +654,22 @@ function connect() {
   source?.close();
   if (!gameId || document.hidden) return;
   const id = gameId;
+  const epoch = routeEpoch;
   source = new EventSource(`/api/games/${id}/events`);
   let initial = true;
   source.addEventListener("snapshot", (event) => {
-    if (gameId !== id) return;
+    if (gameId !== id || epoch !== routeEpoch) return;
     connected = true;
     const snapshot = JSON.parse(event.data);
     const first = initial;
     initial = false;
     enqueue(snapshot, !first).then(() => {
-      if (!busy && !animating && gameId === id) renderGame();
+      if (!busy && !animating && gameId === id && epoch === routeEpoch)
+        renderGame();
     });
   });
   source.onerror = () => {
-    if (gameId !== id) return;
+    if (gameId !== id || epoch !== routeEpoch) return;
     connected = false;
     initial = true;
     if (!animating) renderGame();
@@ -686,14 +745,18 @@ async function route() {
       return;
     }
     try {
-      await enqueue(await api(`/api/games/${id}`), false);
+      const snapshot = await api(`/api/games/${id}`);
+      if (epoch !== routeEpoch || gameId !== id) return;
+      await enqueue(snapshot, false);
+      if (epoch !== routeEpoch || gameId !== id) return;
       connect();
     } catch (error) {
+      if (epoch !== routeEpoch || gameId !== id) return;
       if (error.status === 401 || error.status === 403) renderJoin();
       else renderError(error);
     }
   } catch (error) {
-    renderError(error);
+    if (epoch === routeEpoch && gameId === id) renderError(error);
   }
 }
 

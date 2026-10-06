@@ -463,3 +463,267 @@ async fn event_stream_sends_initial_state_and_committed_moves() {
     .await;
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 }
+
+async fn finished_pair(router: &Router) -> (String, String, String, Value) {
+    let (id, host, _) = create(router, "Roo").await;
+    let guest = join(router, &id, "Bean").await;
+    let response = request(
+        router,
+        "POST",
+        &format!("/api/games/{id}/actions"),
+        &guest,
+        json!({"revision":1,"action":{"type":"resign"}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    (id, host, guest, body(response).await)
+}
+
+async fn rematch(router: &Router, id: &str, cookie: &str, revision: i64, action: &str) -> Response {
+    request(
+        router,
+        "POST",
+        &format!("/api/games/{id}/rematch"),
+        cookie,
+        json!({"revision":revision,"action":action}),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn rematch_accepts_same_players_once_without_changing_the_old_result() {
+    for sender in [0, 1] {
+        let (app, router) = app().await;
+        let (id, host, guest, finished) = finished_pair(&router).await;
+        let cookies = [&host, &guest];
+        let offered = rematch(&router, &id, cookies[sender], 2, "request").await;
+        assert_eq!(offered.status(), StatusCode::OK);
+        let offered = body(offered).await;
+        assert_eq!(offered["game"]["rematch"]["requested_by"], sender);
+        assert_eq!(offered["game"]["revision"], 3);
+        let accepted = rematch(&router, &id, cookies[1 - sender], 3, "accept").await;
+        assert_eq!(accepted.status(), StatusCode::OK);
+        let accepted = body(accepted).await;
+        let next_id = accepted["game"]["rematch"]["game_id"].as_str().unwrap();
+        assert_ne!(next_id, id);
+        assert!(accepted["game"]["rematch"]["requested_by"].is_null());
+        assert_eq!(accepted["game"]["state"], finished["game"]["state"]);
+        assert_eq!(accepted["game"]["ended_at"], finished["game"]["ended_at"]);
+        for (you, cookie) in cookies.iter().enumerate() {
+            let next = snapshot(&router, next_id, cookie).await;
+            assert_eq!(next["you"], you);
+            assert_eq!(next["game"]["players"], finished["game"]["players"]);
+            assert_eq!(next["game"]["state"]["phase"]["type"], "placement");
+            assert_eq!(next["game"]["state"]["move_count"], 0);
+            assert!(next["game"]["state"]["turn"].as_u64().unwrap() < 2);
+            assert!(
+                next["game"]["state"]["pieces"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|p| p["pos"].is_null() && p["kind"] == "kitten")
+            );
+            let profile = body(request(&router, "GET", "/api/me", cookie, json!(null)).await).await;
+            assert_eq!(profile["stats"]["played"], 1);
+            assert_eq!(profile["stats"]["wins"], if you == 0 { 1 } else { 0 });
+            assert_eq!(profile["active"].as_array().unwrap().len(), 1);
+            assert_eq!(profile["history"].as_array().unwrap().len(), 1);
+        }
+        for action in ["request", "accept"] {
+            let duplicate = rematch(&router, &id, cookies[1 - sender], 3, action).await;
+            assert_eq!(duplicate.status(), StatusCode::OK);
+            assert_eq!(body(duplicate).await["game"]["rematch"]["game_id"], next_id);
+        }
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM games")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+        assert_eq!(total, 2);
+        // The next quilt can itself offer another round.
+        let next = snapshot(&router, next_id, &guest).await;
+        let response = request(
+            &router,
+            "POST",
+            &format!("/api/games/{next_id}/actions"),
+            &guest,
+            json!({"revision":next["game"]["revision"],"action":{"type":"resign"}}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            rematch(&router, next_id, &host, 1, "request")
+                .await
+                .status(),
+            StatusCode::OK
+        );
+    }
+}
+
+#[tokio::test]
+async fn rematch_checks_members_finished_state_roles_and_stale_offers() {
+    let (_, router) = app().await;
+    let (id, host, _) = create(&router, "Roo").await;
+    let guest = join(&router, &id, "Bean").await;
+    let (_, outsider, _) = create(&router, "Other").await;
+    assert_eq!(
+        rematch(&router, &id, "", 1, "request").await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        rematch(&router, &id, &outsider, 1, "request")
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        rematch(&router, &id, &host, 1, "request").await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    request(
+        &router,
+        "POST",
+        &format!("/api/games/{id}/actions"),
+        &guest,
+        json!({"revision":1,"action":{"type":"resign"}}),
+    )
+    .await;
+    assert_eq!(
+        rematch(&router, &id, &guest, 2, "accept").await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        rematch(&router, &id, &host, 2, "request").await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        rematch(&router, &id, &host, 2, "request").await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        rematch(&router, &id, &host, 3, "accept").await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        rematch(&router, &id, &host, 3, "decline").await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    assert_eq!(
+        rematch(&router, &id, &guest, 3, "cancel").await.status(),
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let stale = rematch(&router, &id, &guest, 2, "accept").await;
+    assert_eq!(stale.status(), StatusCode::CONFLICT);
+    assert_eq!(body(stale).await["current"]["game"]["revision"], 3);
+    let cancelled = body(rematch(&router, &id, &host, 3, "cancel").await).await;
+    assert!(cancelled["game"]["rematch"]["requested_by"].is_null());
+    assert_eq!(
+        rematch(&router, &id, &guest, 3, "accept").await.status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        rematch(&router, &id, &guest, 4, "request").await.status(),
+        StatusCode::OK
+    );
+    let declined = body(rematch(&router, &id, &host, 5, "decline").await).await;
+    assert!(declined["game"]["rematch"]["requested_by"].is_null());
+    assert_eq!(
+        rematch(&router, &id, &host, 6, "request").await.status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_rematches_leave_one_offer_and_acceptance_creates_one_game() {
+    let (app, router) = app().await;
+    let (id, host, guest, _) = finished_pair(&router).await;
+    let (a, b) = tokio::join!(
+        rematch(&router, &id, &host, 2, "request"),
+        rematch(&router, &id, &guest, 2, "request")
+    );
+    assert!([a.status(), b.status()].contains(&StatusCode::OK));
+    assert!([a.status(), b.status()].contains(&StatusCode::CONFLICT));
+    let pending = snapshot(&router, &id, &host).await;
+    let recipient = if pending["game"]["rematch"]["requested_by"] == 0 {
+        &guest
+    } else {
+        &host
+    };
+    let (a, b) = tokio::join!(
+        rematch(&router, &id, recipient, 3, "accept"),
+        rematch(&router, &id, recipient, 3, "accept")
+    );
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    assert_eq!(
+        body(a).await["game"]["rematch"]["game_id"],
+        body(b).await["game"]["rematch"]["game_id"]
+    );
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM games")
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    assert_eq!(total, 2);
+}
+
+#[tokio::test]
+async fn rematch_persists_pending_and_accepted_links_across_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("games.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let r = router(state.clone());
+    let (id, host, guest, _) = finished_pair(&r).await;
+    assert_eq!(
+        rematch(&r, &id, &host, 2, "request").await.status(),
+        StatusCode::OK
+    );
+    state.pool.close().await;
+    drop(r);
+    let state = App::open(&url, false).await.unwrap();
+    let r = router(state.clone());
+    assert_eq!(
+        snapshot(&r, &id, &guest).await["game"]["rematch"]["requested_by"],
+        0
+    );
+    let accepted = body(rematch(&r, &id, &guest, 3, "accept").await).await;
+    state.pool.close().await;
+    drop(r);
+    let r = router(App::open(&url, false).await.unwrap());
+    let restored = snapshot(&r, &id, &host).await;
+    assert_eq!(restored["game"]["rematch"], accepted["game"]["rematch"]);
+    let next_id = restored["game"]["rematch"]["game_id"].as_str().unwrap();
+    assert_eq!(snapshot(&r, next_id, &guest).await["you"], 1);
+}
+
+#[tokio::test]
+async fn rematch_stream_broadcasts_pending_and_accepted_snapshots() {
+    let (_, router) = app().await;
+    let (id, host, guest, _) = finished_pair(&router).await;
+    let response = request(
+        &router,
+        "GET",
+        &format!("/api/games/{id}/events"),
+        &guest,
+        json!(null),
+    )
+    .await;
+    let mut stream = response.into_body();
+    stream.frame().await.unwrap().unwrap();
+    rematch(&router, &id, &host, 2, "request").await;
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let update = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+    assert!(update.contains("\"requested_by\":0"));
+    assert!(update.contains("\"revision\":3"));
+    let accepted = body(rematch(&router, &id, &guest, 3, "accept").await).await;
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let update = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+    assert!(update.contains(accepted["game"]["rematch"]["game_id"].as_str().unwrap()));
+    assert!(update.contains("\"revision\":4"));
+}

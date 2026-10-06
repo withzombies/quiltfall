@@ -2,7 +2,10 @@ import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { execFileSync } from "node:child_process";
 
-async function createPair(browser) {
+async function createPair(
+  browser,
+  { hostName = "Roo", guestName = "Bean" } = {},
+) {
   const hostContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
     isMobile: true,
@@ -19,14 +22,14 @@ async function createPair(browser) {
   host.on("pageerror", (error) => errors.push(error.message));
   guest.on("pageerror", (error) => errors.push(error.message));
   await host.goto("http://127.0.0.1:3001/");
-  await host.getByLabel("Your name").fill("Roo");
+  await host.getByLabel("Your name").fill(hostName);
   await host.getByRole("button", { name: "Start a game" }).click();
   await expect(
     host.getByRole("heading", { name: "Waiting for your partner…" }),
   ).toBeVisible();
   const url = host.url();
   await guest.goto(url);
-  await guest.getByLabel("Your name").fill("Bean");
+  await guest.getByLabel("Your name").fill(guestName);
   await guest.getByRole("button", { name: "Join the quilt" }).click();
   await expect(host.locator("#connection")).toContainText("Connected");
   await expect(guest.locator("#connection")).toContainText("Connected");
@@ -940,7 +943,7 @@ test("both phones celebrate the winner with dancing cats and can inspect the fin
     pair.host.getByRole("heading", { name: "You won the quilt!", exact: true }),
   ).toBeVisible();
   await pair.host
-    .getByRole("link", { name: "Start another game", exact: false })
+    .getByRole("link", { name: "Your games", exact: true })
     .click();
   await expect(
     pair.host.getByRole("button", { name: "Start a game", exact: true }),
@@ -1045,6 +1048,332 @@ test("reduced-motion finales are static and long names fit at 320px", async ({
       page.getByRole("button", { name: "View final quilt", exact: true }),
     ).toBeVisible();
   }
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+for (const senderSeat of [0, 1]) {
+  test(`seat ${senderSeat} offers a rematch and both phones play another saved quilt`, async ({
+    browser,
+  }, testInfo) => {
+    const pair = await createPair(browser);
+    await resignGuest(pair);
+    const sender = senderSeat === 0 ? pair.host : pair.guest;
+    const recipient = senderSeat === 0 ? pair.guest : pair.host;
+    const senderName = senderSeat === 0 ? "Roo" : "Bean";
+    const partnerName = senderSeat === 0 ? "Bean" : "Roo";
+    for (const page of [sender, recipient]) {
+      await page.evaluate(() => {
+        window.finale = document.querySelector(".cat-party");
+      });
+    }
+    if (senderSeat === 0) {
+      await recipient.getByRole("button", { name: "View final quilt" }).click();
+    }
+    await sender
+      .getByRole("button", {
+        name: `Play again with ${partnerName}`,
+        exact: true,
+      })
+      .click();
+    await expect(sender.locator(".rematch-controls")).toContainText(
+      `Waiting for ${partnerName}…`,
+    );
+    await expect(recipient.locator(".rematch-controls")).toContainText(
+      `${senderName} wants another round`,
+    );
+    expect(
+      await sender.evaluate(
+        () => window.finale === document.querySelector(".cat-party"),
+      ),
+    ).toBe(true);
+    if (senderSeat === 1) {
+      expect(
+        await recipient.evaluate(
+          () => window.finale === document.querySelector(".cat-party"),
+        ),
+      ).toBe(true);
+    } else {
+      await expect(recipient.locator(".board")).toBeVisible();
+      await recipient
+        .getByRole("button", { name: "Back to celebration", exact: false })
+        .click();
+      await expect(recipient.locator(".rematch-controls")).toContainText(
+        `${senderName} wants another round`,
+      );
+    }
+    await expect(sender.locator(".result-card")).toHaveCSS("opacity", "1");
+    await expect(recipient.locator(".result-card")).toHaveCSS("opacity", "1");
+    for (const page of [sender, recipient]) {
+      expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    }
+    await recipient.screenshot({
+      path: `test-results/${testInfo.project.name}-rematch-offer-${senderSeat}.png`,
+    });
+    await recipient
+      .getByRole("button", { name: "Play again", exact: true })
+      .click();
+    await expect(pair.host).not.toHaveURL(new RegExp(`${pair.id}$`));
+    const nextURL = pair.host.url();
+    await expect(pair.guest).toHaveURL(nextURL);
+    for (const [seat, page] of [pair.host, pair.guest].entries()) {
+      await expect(page.locator("#connection")).toContainText("Connected");
+      await expect(page.locator(".board")).toBeVisible();
+      await expect(page.locator(".invite-box")).toHaveCount(0);
+      const snap = await (
+        await page.request.get(
+          `${new URL(nextURL).pathname.replace("/game/", "/api/games/")}`,
+        )
+      ).json();
+      expect(snap.you).toBe(seat);
+      expect(snap.game.players.map((p) => p.name)).toEqual(["Roo", "Bean"]);
+      expect(snap.game.state.move_count).toBe(0);
+      expect(
+        snap.game.state.pieces.every(
+          (p) => p.kind === "kitten" && p.pos === null,
+        ),
+      ).toBe(true);
+      expect(
+        (await (await page.request.get("/api/me")).json()).stats.played,
+      ).toBe(1);
+    }
+    await sender.goto(`/game/${pair.id}`);
+    await expect(
+      sender.getByRole("link", { name: "Open next game", exact: true }),
+    ).toBeVisible();
+    await expect(sender).toHaveURL(new RegExp(`${pair.id}$`));
+    await expect(sender.locator(".result-reason")).toHaveText(
+      "Won by resignation",
+    );
+    await sender
+      .getByRole("link", { name: "Open next game", exact: true })
+      .click();
+    await expect(sender).toHaveURL(nextURL);
+    await expect(sender.locator("#connection")).toContainText("Connected");
+    // Repeat the complete flow to ensure the new game is independently rematchable.
+    await resignGuest(pair);
+    await pair.host
+      .getByRole("button", { name: "Play again with Bean", exact: true })
+      .click();
+    await pair.guest
+      .getByRole("button", { name: "Play again", exact: true })
+      .click();
+    await expect(pair.host).not.toHaveURL(nextURL);
+    await expect(pair.guest).toHaveURL(pair.host.url());
+    await expect(pair.host.locator(".board")).toBeVisible();
+    expect(
+      (await (await pair.host.request.get("/api/me")).json()).stats.played,
+    ).toBe(2);
+    expect(pair.errors).toEqual([]);
+    await pair.hostContext.close();
+    await pair.guestContext.close();
+  });
+}
+
+test("rematch offers survive refresh and can be declined or cancelled on narrow phones", async ({
+  browser,
+}) => {
+  const hostName = "W".repeat(32);
+  const pair = await createPair(browser, { hostName });
+  for (const page of [pair.host, pair.guest]) {
+    await page.setViewportSize({ width: 320, height: 780 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  }
+  await pair.guest.getByRole("button", { name: "Resign this game" }).click();
+  await pair.guest.getByRole("button", { name: "Resign", exact: true }).click();
+  await pair.host
+    .getByRole("button", { name: "Play again with Bean", exact: true })
+    .click();
+  await pair.guest.reload();
+  await expect(pair.guest.locator(".rematch-controls")).toContainText(
+    `${hostName} wants another round`,
+  );
+  for (const page of [pair.host, pair.guest]) {
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= 320),
+    ).toBe(true);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  }
+  await pair.guest
+    .getByRole("button", { name: "Not now", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("button", {
+      name: "Play again with Bean",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await pair.guest
+    .getByRole("button", { name: `Play again with ${hostName}`, exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("button", { name: "Play again", exact: true }),
+  ).toBeEnabled();
+  await pair.guest
+    .getByRole("button", { name: "Cancel offer", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("button", {
+      name: "Play again with Bean",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await pair.host.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await expect(
+    pair.host.getByRole("button", {
+      name: "Play again with Bean",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await pair.host.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(
+    pair.host.getByRole("button", {
+      name: "Play again with Bean",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("reconnecting a phone follows acceptance without replaying or creating another game", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await resignGuest(pair);
+  await pair.host
+    .getByRole("button", { name: "Play again with Bean", exact: true })
+    .click();
+  await expect(
+    pair.guest.getByRole("button", { name: "Play again", exact: true }),
+  ).toBeEnabled();
+  // Closing the real stream through the existing visibility handler models a sleeping phone.
+  await pair.host.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await pair.guest
+    .getByRole("button", { name: "Play again", exact: true })
+    .click();
+  await expect(pair.guest).not.toHaveURL(new RegExp(`${pair.id}$`));
+  await expect(pair.host).toHaveURL(new RegExp(`${pair.id}$`));
+  await pair.host.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(pair.host).toHaveURL(pair.guest.url());
+  await expect(pair.host.locator(".board")).toBeVisible();
+  const profile = await (await pair.host.request.get("/api/me")).json();
+  expect(profile.active).toHaveLength(1);
+  expect(profile.history).toHaveLength(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("a lost acceptance response recovers the saved next quilt", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await resignGuest(pair);
+  await pair.host
+    .getByRole("button", { name: "Play again with Bean", exact: true })
+    .click();
+  await expect(
+    pair.guest.getByRole("button", { name: "Play again", exact: true }),
+  ).toBeEnabled();
+  await pair.guest.route(`**/api/games/${pair.id}/rematch`, async (route) => {
+    // Stop SSE before the real commit so recovery must read the saved snapshot.
+    await pair.guest.evaluate(() => {
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        value: true,
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    await route.abort("failed");
+  });
+  await pair.guest
+    .getByRole("button", { name: "Play again", exact: true })
+    .click();
+  await expect(pair.guest).not.toHaveURL(new RegExp(`${pair.id}$`));
+  await expect(pair.host).toHaveURL(pair.guest.url());
+  await pair.guest.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(pair.guest.locator("#connection")).toContainText("Connected");
+  await expect(pair.guest.locator(".board")).toBeVisible();
+  expect(
+    (await (await pair.host.request.get("/api/me")).json()).active,
+  ).toHaveLength(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("a delayed rematch response cannot replace a newly opened game", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await resignGuest(pair);
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let arrived;
+  const received = new Promise((resolve) => {
+    arrived = resolve;
+  });
+  await pair.host.route(`**/api/games/${pair.id}/rematch`, async (route) => {
+    const response = await route.fetch();
+    arrived();
+    await held;
+    await route.fulfill({ response });
+  });
+  await pair.host
+    .getByRole("button", { name: "Play again with Bean", exact: true })
+    .click();
+  await received;
+  await expect(
+    pair.host.getByRole("button", { name: "Cancel offer", exact: true }),
+  ).toBeDisabled();
+  await pair.host
+    .getByRole("link", { name: "Your games", exact: true })
+    .click();
+  await pair.host
+    .getByRole("button", { name: "Start a game", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("heading", { name: "Waiting for your partner…" }),
+  ).toBeVisible();
+  const newURL = pair.host.url();
+  const reply = pair.host.waitForResponse((response) =>
+    response.url().endsWith(`/api/games/${pair.id}/rematch`),
+  );
+  release();
+  await reply;
+  await pair.host.evaluate(
+    () => new Promise((resolve) => setTimeout(resolve, 0)),
+  );
+  await expect(pair.host).toHaveURL(newURL);
+  await expect(
+    pair.host.getByRole("heading", { name: "Waiting for your partner…" }),
+  ).toBeVisible();
+  await expect(pair.host.locator(".result-card")).toHaveCount(0);
+  expect(pair.errors).toEqual([]);
   await pair.hostContext.close();
   await pair.guestContext.close();
 });

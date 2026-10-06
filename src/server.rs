@@ -52,6 +52,28 @@ struct Game {
     revision: i64,
     created_at: i64,
     ended_at: Option<i64>,
+    rematch: Rematch,
+}
+
+#[derive(Clone, Default, Serialize)]
+struct Rematch {
+    requested_by: Option<usize>,
+    game_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RematchAction {
+    Request,
+    Accept,
+    Decline,
+    Cancel,
+}
+
+#[derive(Deserialize)]
+struct RematchInput {
+    revision: i64,
+    action: RematchAction,
 }
 
 #[derive(Serialize)]
@@ -191,6 +213,7 @@ pub fn router(app: App) -> Router {
         .route("/api/games/{id}", get(read))
         .route("/api/games/{id}/join", post(join))
         .route("/api/games/{id}/actions", post(act))
+        .route("/api/games/{id}/rematch", post(rematch))
         .route("/api/games/{id}/events", get(events))
         .route("/health", get(|| async { "ok" }))
         .with_state(app)
@@ -322,6 +345,12 @@ async fn load_game(conn: &mut SqliteConnection, id: &str) -> Result<Game, ApiErr
         revision: row.get("revision"),
         created_at: row.get("created_at"),
         ended_at: row.get("ended_at"),
+        rematch: Rematch {
+            requested_by: row
+                .get::<Option<i64>, _>("rematch_requested_by")
+                .map(|seat| seat as usize),
+            game_id: row.get("rematch_game_id"),
+        },
     })
 }
 
@@ -368,6 +397,7 @@ async fn create(
                 revision: 0,
                 created_at,
                 ended_at: None,
+                rematch: Rematch::default(),
             },
             you: 0,
             effects: vec![],
@@ -500,6 +530,114 @@ async fn act(
         game,
         you,
         effects: result.effects,
+    }))
+}
+
+async fn rematch(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    Json(input): Json<RematchInput>,
+) -> Result<Json<Snapshot>, ApiError> {
+    let mut tx = app.pool.begin().await?;
+    let player = identity(&mut tx, &headers).await?;
+    let mut game = load_game(&mut tx, &id).await?;
+    let you = seat(&game, &player)?;
+    if game.players.len() != 2 || !matches!(game.state.phase, Phase::Finished { .. }) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Finish this quilt before offering another round.",
+        ));
+    }
+    // Retrying an offer/accept after a lost response must reuse the saved result.
+    if (game.rematch.game_id.is_some()
+        && matches!(input.action, RematchAction::Request | RematchAction::Accept))
+        || (game.rematch.requested_by == Some(you)
+            && matches!(input.action, RematchAction::Request))
+    {
+        tx.commit().await?;
+        return Ok(Json(Snapshot {
+            game,
+            you,
+            effects: vec![],
+        }));
+    }
+    if game.revision != input.revision {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            message: "The rematch offer has changed. Check the updated offer.".into(),
+            current: Some(Box::new(Snapshot {
+                game,
+                you,
+                effects: vec![],
+            })),
+        });
+    }
+    match input.action {
+        RematchAction::Request => {
+            if game.rematch.requested_by.is_some() {
+                tx.commit().await?;
+                return Ok(Json(Snapshot {
+                    game,
+                    you,
+                    effects: vec![],
+                }));
+            }
+            game.rematch.requested_by = Some(you);
+        }
+        RematchAction::Accept => {
+            if game.rematch.requested_by != Some(1 - you) {
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Only your partner can accept your offer.",
+                ));
+            }
+            let next_id = Uuid::new_v4().simple().to_string();
+            let state = GameState::new(Uuid::new_v4().as_bytes()[0] % 2);
+            sqlx::query(
+                "INSERT INTO games(id,host_id,guest_id,state,created_at) VALUES(?,?,?,?,?)",
+            )
+            .bind(&next_id)
+            .bind(&game.players[0].id)
+            .bind(&game.players[1].id)
+            .bind(serde_json::to_string(&state)?)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
+            game.rematch.requested_by = None;
+            game.rematch.game_id = Some(next_id);
+        }
+        RematchAction::Decline | RematchAction::Cancel => {
+            let expected = match input.action {
+                RematchAction::Decline => 1 - you,
+                _ => you,
+            };
+            if game.rematch.requested_by != Some(expected) {
+                return Err(ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "That offer is no longer available to change.",
+                ));
+            }
+            game.rematch.requested_by = None;
+        }
+    }
+    game.revision += 1;
+    sqlx::query("UPDATE games SET rematch_requested_by=?,rematch_game_id=?,revision=? WHERE id=?")
+        .bind(game.rematch.requested_by.map(|seat| seat as i64))
+        .bind(&game.rematch.game_id)
+        .bind(game.revision)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let _ = app.updates.send(Notice {
+        game: game.clone(),
+        effects: vec![],
+    });
+    Ok(Json(Snapshot {
+        game,
+        you,
+        effects: vec![],
     }))
 }
 

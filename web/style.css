@@ -1138,3 +1138,32 @@ dialog h2 {
     display: none;
   }
 }
+
+.rematch-controls {
+  max-width: 464px;
+  margin: 20px auto;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+.result-screen .rematch-controls {
+  margin: 0;
+}
+.rematch-controls .button {
+  width: 100%;
+  min-height: 44px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rematch-controls .rematch-status {
+  margin: 0 0 12px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.rematch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rematch-actions .button {
+  flex: 1 1 110px;
+}

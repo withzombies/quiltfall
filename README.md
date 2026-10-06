@@ -19,6 +19,9 @@ cargo run
    Details → TCP/IP.
 3. On your phone, open `http://YOUR-COMPUTER-IP:3000`.
 4. Enter your name, start a game, and send the invite link to your partner.
+5. After a game, choose **Play again with your partner**. They can accept on the
+   finished-game screen; both phones open the next quilt without another invite.
+   Offers survive refreshes, and the original game stays in your history.
 5. Your partner opens the link in their browser and taps **Join the quilt**.
 
 Use the same computer address consistently so your browser remembers you.
