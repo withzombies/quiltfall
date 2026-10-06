@@ -27,3 +27,13 @@ pass tests and formatting with fresh app artifacts. Archive timestamps require
 clearing app build artifacts to prevent reuse across same-version snapshots.
 Next: commit verified cleanup, apply transformation to complete local history,
 audit all actual objects/metadata and exact latest-tree equality, restart server.
+
+Final verification: all10 commits (nine original plus source cleanup) rewritten.
+Latest tree hash identical to tested source; authors/dates/sequence preserved.
+Actual repository audit passed all173 retained objects (including unreachable
+objects), paths, refs, reflogs and local configuration; strict fsck clean. Original
+objects removed by full rewrite/repack; no backup refs remain inside repository.
+Verified outside recovery bundle:
+/Users/ryan/src/quiltfall-history-backup-ntdf29fa/before-cleanup.bundle
+Server restarted, /health ok and all five saved-game rows unchanged by checksum.
+Final verification/archive adds a documentation-only commit to cleaned history.
