@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+trap 'exit 0' TERM INT
+if ! awk '$5 == "/litefs" && / - fuse/ { found=1 } END { exit !found }' /proc/self/mountinfo; then
+  echo 'Refusing startup: LiteFS is not mounted.' >&2
+  exit 1
+fi
+if [ "${QUILTFALL_BOOTSTRAP:-0}" = 1 ]; then
+  echo 'Bootstrap: waiting for verified import and /data/.quiltfall-initialized.'
+  while [ ! -f /data/.quiltfall-initialized ]; do sleep 1 & wait "$!"; done
+fi
+if [ ! -f /data/.quiltfall-initialized ] || [ ! -s /litefs/quiltfall.db ]; then
+  echo 'Refusing startup: initialized database is missing. Restore/import explicitly.' >&2
+  exit 1
+fi
+if [ "${DATABASE_URL:-}" != 'sqlite:///litefs/quiltfall.db' ]; then
+  echo 'Refusing startup: DATABASE_URL must use the mounted LiteFS database.' >&2
+  exit 1
+fi
+export QUILTFALL_REQUIRE_EXISTING=true
+exec quiltfall

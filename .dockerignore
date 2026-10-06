@@ -6,3 +6,7 @@ test-results
 playwright-report
 plans
 tests
+
+backups
+*.db
+*.db-*

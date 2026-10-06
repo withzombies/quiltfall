@@ -1,0 +1,343 @@
+{
+  "placement": {
+    "pieces": [
+      {
+        "id": 0,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 1,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 2,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 3,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 4,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 5,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 6,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 7,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 8,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 9,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 10,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 11,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 12,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 13,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 14,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 15,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      }
+    ],
+    "turn": 0,
+    "phase": {
+      "type": "placement"
+    },
+    "move_count": 0
+  },
+  "graduation": {
+    "pieces": [
+      {
+        "id": 0,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": {
+          "x": 0,
+          "y": 0
+        }
+      },
+      {
+        "id": 1,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": {
+          "x": 1,
+          "y": 0
+        }
+      },
+      {
+        "id": 2,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": {
+          "x": 2,
+          "y": 0
+        }
+      },
+      {
+        "id": 3,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": {
+          "x": 3,
+          "y": 0
+        }
+      },
+      {
+        "id": 4,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 5,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 6,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 7,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 8,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 9,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 10,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 11,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 12,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 13,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 14,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 15,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      }
+    ],
+    "turn": 0,
+    "phase": {
+      "type": "graduation",
+      "options": [
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          1,
+          2,
+          3
+        ]
+      ]
+    },
+    "move_count": 4
+  },
+  "finished": {
+    "pieces": [
+      {
+        "id": 0,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 1,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 2,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 3,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 4,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 5,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 6,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 7,
+        "owner": 0,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 8,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 9,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 10,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 11,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 12,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 13,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 14,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      },
+      {
+        "id": 15,
+        "owner": 1,
+        "kind": "kitten",
+        "pos": null
+      }
+    ],
+    "turn": 0,
+    "phase": {
+      "type": "finished",
+      "winner": 1,
+      "reason": "resignation"
+    },
+    "move_count": 0
+  }
+}

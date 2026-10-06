@@ -22,9 +22,9 @@ Open [Quiltfall](https://quiltfall.fly.dev) in your phone's browser. Enter your
 name, start a game, and send the invite link to your partner. They open it and
 tap **Join the quilt**. No accounts or app installation are needed.
 
-The public instance uses temporary storage: games and stats may disappear when
-it restarts or redeploys. To keep your own saves, run a local server using the
-[hosting guide](HOSTING.md).
+The public instance keeps games and stats on a persistent volume. During a
+server redeploy, open games briefly pause and resume automatically. The
+[hosting guide](HOSTING.md) covers deployment and backups.
 
 Use separate phones or browsers: ordinary tabs in one browser share the same
 player. Keep using the same browser and server address to find your saved games.
@@ -88,8 +88,8 @@ an offer while waiting. Previous games remain in your history.
 ## Saves and results
 
 Your game saves after every move. Refreshing or sleeping your phone restores
-the last saved board while the server still has its database. A local server
-keeps saves across restarts; the public instance has temporary storage. **Your games** lists ongoing games,
+the last saved board. Both local and public servers keep saves across restarts
+and redeploys. **Your games** lists ongoing games,
 finished results, games played, wins, and losses. Resignation counts as a loss;
 unfinished games do not count toward results.
 

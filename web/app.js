@@ -14,6 +14,12 @@ let current = null;
 let gameId = null;
 let source = null;
 let connected = false;
+let connectionState = "connecting";
+let retryTimer;
+let retryStep = 0;
+let connectionEpoch = 0;
+let authorizedView = false;
+let verification = null;
 let busy = false;
 let animating = false;
 let motionController = null;
@@ -49,6 +55,8 @@ async function api(path, payload) {
     method: payload === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json" },
     cache: "no-store",
+    credentials: "same-origin",
+    signal: AbortSignal.timeout(5000),
     ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
   });
   const data = await response
@@ -60,17 +68,20 @@ async function api(path, payload) {
     );
     error.status = response.status;
     error.current = data.current;
+    error.code = data.code;
     throw error;
   }
   return data;
 }
 
-async function loadProfile() {
+async function loadProfile(epoch = routeEpoch) {
   try {
-    me = await api("/api/me");
+    const profile = await api("/api/me");
+    if (epoch === routeEpoch) me = profile;
   } catch (error) {
-    if (error.status === 401) me = null;
-    else throw error;
+    if (error.code === "session_missing") {
+      if (epoch === routeEpoch) me = null;
+    } else throw error;
   }
 }
 
@@ -100,6 +111,7 @@ function bindNameForm(joining = false) {
     .querySelector("#name-form")
     .addEventListener("submit", async (event) => {
       event.preventDefault();
+      const epoch = routeEpoch;
       const button = event.target.querySelector("button");
       button.disabled = true;
       const name = document.querySelector("#player-name").value.trim();
@@ -108,16 +120,16 @@ function bindNameForm(joining = false) {
           joining ? `/api/games/${gameId}/join` : "/api/games",
           { name },
         );
-        await loadProfile();
+        if (epoch !== routeEpoch) return;
+        verification = {
+          id: snapshot.game.id,
+          player: snapshot.game.players[snapshot.you].id,
+          you: snapshot.you,
+        };
         history.pushState({}, "", `/game/${snapshot.game.id}`);
-        gameId = snapshot.game.id;
-        current = null;
-        busy = false;
-        animating = false;
-        selectedOption = 0;
-        await enqueue(snapshot, false);
-        connect();
+        await route();
       } catch (error) {
+        if (epoch !== routeEpoch) return;
         message(
           error.message || "Could not reach the server. Please try again.",
         );
@@ -171,8 +183,23 @@ function renderJoin() {
 }
 
 function renderError(error) {
+  stopMotion();
+  current = null;
+  authorizedView = false;
+  stopConnection();
+  connectionState = "unavailable";
   root.setAttribute("aria-busy", "false");
-  root.innerHTML = `<section class="join-page card"><h1>Lost the thread?</h1><p class="small">${escape(error.status === 404 ? error.message : "Could not connect to your game. Your saved moves are safe.")}</p><button class="button" id="retry">Try again</button> <a class="button secondary" href="/">Go home</a></section>`;
+  const session = [
+    "session_missing",
+    "session_invalid",
+    "not_a_member",
+  ].includes(error.code);
+  const explanation = session
+    ? "This browser cannot resume your seat. Use the original browser with its game cookie. Try again if that cookie is available; entering a name cannot restore a seat."
+    : error.status
+      ? error.message
+      : "Could not reach your game. Try again when your connection returns.";
+  root.innerHTML = `<section class="join-page card"><h1>${session ? "Your game session is unavailable" : "Lost the thread?"}</h1><p class="small">${escape(explanation)}</p><button class="button" id="retry">Try again</button> <a class="button secondary" href="/">Your games</a></section>`;
   document.querySelector("#retry").addEventListener("click", () => route());
 }
 
@@ -222,6 +249,7 @@ function renderResult() {
   const { state, players, id } = current.game;
   // A finished board stays immutable while rematch offers advance its revision.
   if (root.querySelector(".result-card")?.dataset.resultKey === id) {
+    root.querySelector("#connection").textContent = connectionLabel();
     renderRematchControls();
     return;
   }
@@ -248,6 +276,7 @@ function renderResult() {
       <div class="dancer champion"><svg class="crown" viewBox="0 0 64 44"><path d="M8 35 4 9l17 12L32 4l11 17L60 9l-4 26Z" fill="#e6bb61" stroke="#956b32" stroke-width="3" stroke-linejoin="round"/><path d="M10 40h44" stroke="#956b32" stroke-width="4" stroke-linecap="round"/></svg>${cat("cat", winner)}</div>
       <div class="dancer kitten-dancer">${cat("kitten", winner)}</div>
     </div>
+    <p class="connection" id="connection">${connectionLabel()}</p>
     <div class="winner-chip">${escape(name)} <span>· quilt champion</span></div>
     <p class="result-details"><span class="result-reason">${reason}</span> · ${state.move_count} moves</p>
     <div class="rematch-controls" aria-live="polite"></div>
@@ -328,14 +357,14 @@ function renderGame() {
         ? graduationHint
         : `Tap an empty square to place a ${selectedKind}. Moves are final.`;
   root.innerHTML = `<section class="game-page">
-    <div class="game-nav">${finished ? '<button class="text-button" id="celebration-back">← Back to celebration</button>' : '<a href="/">← Your games</a>'}<span class="connection ${connected ? "" : "offline"}" id="connection">${connected ? "Connected · game saved" : "Reconnecting…"}</span></div>
+    <div class="game-nav">${finished ? '<button class="text-button" id="celebration-back">← Back to celebration</button>' : '<a href="/">← Your games</a>'}<span class="connection ${connected ? "" : "offline"}" id="connection">${connectionLabel()}</span></div>
     <div class="players">${playerCard(0)}<span class="versus">&amp;</span>${playerCard(1)}</div>
     <div class="game-status" aria-live="polite"><h1>${finished ? "The final quilt" : escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
     <div class="motion-viewport"><div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div></div>
     <div class="board-footnote"><span>A LITTLE NUDGE GOES A LONG WAY</span><span>MOVE ${state.move_count}</span></div>
     ${finished ? '<div class="rematch-controls" aria-live="polite"></div>' : ""}
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
-    ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/game/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
+    ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/invite/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
     ${
       groups.length && state.turn === current.you
         ? `<div class="graduation"><p>Pick one group to return to your pool.</p><div class="graduation-options">${groups
@@ -633,9 +662,9 @@ async function submit(action, endpoint = "actions") {
         const saved = await api(`/api/games/${id}`);
         if (epoch !== routeEpoch || gameId !== id) return;
         await enqueue(saved, false);
-      } catch {
+      } catch (readError) {
         if (epoch !== routeEpoch || gameId !== id) return;
-        connected = false;
+        recoverConnection(readError);
       }
     }
     if (epoch === routeEpoch && gameId === id)
@@ -650,29 +679,124 @@ async function submit(action, endpoint = "actions") {
   }
 }
 
-function connect() {
+function connectionLabel() {
+  return {
+    connecting: "Connecting…",
+    connected: "Connected · game saved",
+    reconnecting: "Reconnecting…",
+    offline: "Offline · waiting for connection",
+    paused: "Paused · return to resume",
+    unavailable: "Connection unavailable",
+  }[connectionState];
+}
+
+function stopConnection() {
+  ++connectionEpoch;
+  clearTimeout(retryTimer);
+  retryTimer = undefined;
   source?.close();
-  if (!gameId || document.hidden) return;
+  source = null;
+  connected = false;
+}
+
+function canConnect() {
+  return authorizedView && gameId && !document.hidden && navigator.onLine;
+}
+
+function pauseConnection() {
+  stopConnection();
+  connectionState = navigator.onLine ? "paused" : "offline";
+  stopMotion();
+  if (current) renderGame();
+}
+
+function recoverConnection(error) {
+  if (
+    error?.status &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 429
+  ) {
+    renderError(error);
+    return;
+  }
+  stopConnection();
+  if (!canConnect()) {
+    if (authorizedView) pauseConnection();
+    return;
+  }
+  connectionState = "reconnecting";
+  if (current && !animating) renderGame();
+  const epoch = routeEpoch;
+  const generation = connectionEpoch;
+  const id = gameId;
+  const delay = [1000, 2000, 4000, 8000, 15000][Math.min(retryStep++, 4)];
+  retryTimer = setTimeout(async () => {
+    retryTimer = undefined;
+    try {
+      const snapshot = await api(`/api/games/${id}`);
+      if (
+        epoch !== routeEpoch ||
+        generation !== connectionEpoch ||
+        !canConnect()
+      )
+        return;
+      await enqueue(snapshot, false);
+      if (
+        epoch !== routeEpoch ||
+        generation !== connectionEpoch ||
+        !canConnect()
+      )
+        return;
+      connect();
+    } catch (readError) {
+      if (epoch === routeEpoch && generation === connectionEpoch)
+        recoverConnection(readError);
+    }
+  }, delay);
+}
+
+function connect() {
+  stopConnection();
+  if (!canConnect()) {
+    if (authorizedView) pauseConnection();
+    return;
+  }
   const id = gameId;
   const epoch = routeEpoch;
-  source = new EventSource(`/api/games/${id}/events`);
+  const stream = new EventSource(`/api/games/${id}/events`);
+  source = stream;
   let initial = true;
-  source.addEventListener("snapshot", (event) => {
-    if (gameId !== id || epoch !== routeEpoch) return;
+  stream.addEventListener("snapshot", (event) => {
+    if (gameId !== id || epoch !== routeEpoch || source !== stream) return;
+    let snapshot;
+    try {
+      snapshot = JSON.parse(event.data);
+      if (snapshot.game.id !== id || snapshot.you !== current.you)
+        throw new Error("Invalid game snapshot");
+    } catch (error) {
+      recoverConnection(error);
+      return;
+    }
     connected = true;
-    const snapshot = JSON.parse(event.data);
+    connectionState = "connected";
+    retryStep = 0;
     const first = initial;
     initial = false;
     enqueue(snapshot, !first).then(() => {
-      if (!busy && !animating && gameId === id && epoch === routeEpoch)
+      if (
+        !busy &&
+        !animating &&
+        gameId === id &&
+        epoch === routeEpoch &&
+        source === stream
+      )
         renderGame();
     });
   });
-  source.onerror = () => {
-    if (gameId !== id || epoch !== routeEpoch) return;
-    connected = false;
-    initial = true;
-    if (!animating) renderGame();
+  stream.onerror = () => {
+    if (gameId === id && epoch === routeEpoch && source === stream)
+      recoverConnection();
   };
 }
 
@@ -724,37 +848,69 @@ function confirmResignation() {
 async function route() {
   const epoch = ++routeEpoch;
   stopMotion();
-  source?.close();
-  connected = false;
+  stopConnection();
+  authorizedView = false;
+  connectionState = "connecting";
+  retryStep = 0;
   current = null;
   busy = false;
   animating = false;
   showFinalQuilt = false;
   selectedOption = 0;
   selectedKind = "kitten";
-  const match = location.pathname.match(/^\/game\/([a-zA-Z0-9-]+)$/);
-  gameId = match?.[1] ?? null;
+  const match = location.pathname.match(/^\/(game|invite)\/([a-zA-Z0-9-]+)$/);
+  gameId = match?.[2] ?? null;
   const id = gameId;
   root.setAttribute("aria-busy", "true");
   root.innerHTML = '<p class="loading">Fluffing the pillows…</p>';
   try {
-    await loadProfile();
-    if (epoch !== routeEpoch || gameId !== id) return;
     if (!id) {
-      renderHome();
+      await loadProfile();
+      if (epoch === routeEpoch) renderHome();
       return;
     }
+    let snapshot;
     try {
-      const snapshot = await api(`/api/games/${id}`);
-      if (epoch !== routeEpoch || gameId !== id) return;
-      await enqueue(snapshot, false);
-      if (epoch !== routeEpoch || gameId !== id) return;
-      connect();
+      snapshot = await api(`/api/games/${id}`);
     } catch (error) {
-      if (epoch !== routeEpoch || gameId !== id) return;
-      if (error.status === 401 || error.status === 403) renderJoin();
-      else renderError(error);
+      if (epoch !== routeEpoch) return;
+      if (
+        match[1] === "invite" &&
+        ["session_missing", "not_a_member"].includes(error.code)
+      ) {
+        const status = await api(`/api/games/${id}/invite`);
+        if (epoch !== routeEpoch) return;
+        if (!status.joinable) {
+          renderError({ status: 409, message: "Both seats are taken." });
+          return;
+        }
+        await loadProfile();
+        if (epoch === routeEpoch) renderJoin();
+        return;
+      }
+      throw error;
     }
+    if (epoch !== routeEpoch) return;
+    if (verification?.id === id) {
+      const profile = await api("/api/me");
+      if (epoch !== routeEpoch) return;
+      if (
+        profile.player.id !== verification.player ||
+        snapshot.you !== verification.you ||
+        snapshot.game.players[snapshot.you].id !== verification.player
+      ) {
+        throw Object.assign(
+          new Error("This browser could not retain your game session."),
+          { code: "session_invalid" },
+        );
+      }
+      me = profile;
+      verification = null;
+    }
+    if (match[1] === "invite") history.replaceState({}, "", `/game/${id}`);
+    authorizedView = true;
+    await enqueue(snapshot, false);
+    if (epoch === routeEpoch && gameId === id) connect();
   } catch (error) {
     if (epoch === routeEpoch && gameId === id) renderError(error);
   }
@@ -781,7 +937,7 @@ document.addEventListener("click", (event) => {
   const url = new URL(link.href);
   if (
     url.origin === location.origin &&
-    (url.pathname === "/" || url.pathname.startsWith("/game/"))
+    (url.pathname === "/" || /^\/(game|invite)\//.test(url.pathname))
   ) {
     event.preventDefault();
     history.pushState({}, "", url.pathname);
@@ -789,27 +945,15 @@ document.addEventListener("click", (event) => {
   }
 });
 window.addEventListener("popstate", route);
-document.addEventListener("visibilitychange", () => {
-  if (!gameId) return;
-  if (document.hidden) {
-    source?.close();
-    connected = false;
-    stopMotion();
-    if (current) renderGame();
-  } else {
-    connected = false;
-    if (!animating) renderGame();
-    connect();
-  }
-});
-window.addEventListener("online", () => {
-  if (gameId) connect();
-  else route();
-});
-window.addEventListener("offline", () => {
-  connected = false;
-  if (current && !animating) renderGame();
-});
+function resumeConnection() {
+  if (!authorizedView) return;
+  if (canConnect()) recoverConnection();
+  else pauseConnection();
+}
+document.addEventListener("visibilitychange", resumeConnection);
+window.addEventListener("online", resumeConnection);
+window.addEventListener("offline", resumeConnection);
+
 route();
 
 reducedMotion.addEventListener("change", () => {

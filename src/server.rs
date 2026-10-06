@@ -1,7 +1,7 @@
 use crate::game::{Action, Effect, GameState, Phase};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{MatchedPath, OriginalUri, Path, Request, State},
     http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse, Response,
@@ -21,8 +21,8 @@ use std::{
     str::FromStr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::broadcast;
-use tokio_stream::Stream;
+use tokio::sync::{broadcast, watch};
+use tokio_stream::{Stream, StreamExt};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -30,6 +30,8 @@ pub struct App {
     pub pool: SqlitePool,
     updates: broadcast::Sender<Notice>,
     secure_cookie: bool,
+    shutdown: watch::Sender<bool>,
+    public_origin: String,
 }
 
 #[derive(Clone)]
@@ -87,6 +89,7 @@ struct ApiError {
     status: StatusCode,
     message: String,
     current: Option<Box<Snapshot>>,
+    code: Option<&'static str>,
 }
 
 impl ApiError {
@@ -95,15 +98,30 @@ impl ApiError {
             status,
             message: message.into(),
             current: None,
+            code: None,
+        }
+    }
+}
+
+impl ApiError {
+    fn coded(status: StatusCode, code: &'static str, message: &str) -> Self {
+        Self {
+            code: Some(code),
+            ..Self::new(status, message)
         }
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        tracing::warn!(
+            status = self.status.as_u16(),
+            reason = self.code.unwrap_or("request_rejected"),
+            "request rejected"
+        );
         (
             self.status,
-            Json(json!({"error":self.message,"current":self.current})),
+            Json(json!({"error":self.message,"current":self.current,"code":self.code})),
         )
             .into_response()
     }
@@ -130,12 +148,60 @@ impl From<serde_json::Error> for ApiError {
 }
 
 impl App {
+    pub fn with_public_origin(
+        mut self,
+        origin: &str,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let uri: axum::http::Uri = origin.parse()?;
+        let authority = uri
+            .authority()
+            .ok_or("PUBLIC_ORIGIN needs an HTTP(S) authority")?;
+        let raw = authority.as_str();
+        let port = if raw.starts_with('[') {
+            raw.split_once(']')
+                .and_then(|(_, suffix)| suffix.strip_prefix(':'))
+        } else {
+            raw.split_once(':').map(|(_, port)| port)
+        };
+        if !matches!(uri.scheme_str(), Some("http" | "https"))
+            || authority.as_str().contains('@')
+            || authority.host().is_empty()
+            || uri.query().is_some()
+            || !matches!(uri.path(), "" | "/")
+            || origin.contains(['#', '\\'])
+            || port.is_some_and(|port| port.parse::<u16>().is_err())
+        {
+            return Err("PUBLIC_ORIGIN must be an HTTP(S) origin without credentials, path, query or fragment".into());
+        }
+        self.public_origin = origin.trim_end_matches('/').to_owned();
+        Ok(self)
+    }
+
+    pub fn begin_shutdown(&self) {
+        self.shutdown.send_replace(true);
+    }
+
     pub async fn open(
         url: &str,
         secure_cookie: bool,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::open_database(url, secure_cookie, true).await
+    }
+
+    pub async fn open_existing(
+        url: &str,
+        secure_cookie: bool,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Self::open_database(url, secure_cookie, false).await
+    }
+
+    async fn open_database(
+        url: &str,
+        secure_cookie: bool,
+        create: bool,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let options = SqliteConnectOptions::from_str(url)?
-            .create_if_missing(true)
+            .create_if_missing(create)
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
@@ -143,11 +209,21 @@ impl App {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
+        {
+            let mut rows = sqlx::query("SELECT state FROM games").fetch(&pool);
+            while let Some(row) = rows.next().await {
+                let row = row?;
+                serde_json::from_str::<GameState>(row.get("state"))?;
+            }
+        }
         let (updates, _) = broadcast::channel(64);
+        let (shutdown, _) = watch::channel(false);
         Ok(Self {
             pool,
             updates,
             secure_cookie,
+            shutdown,
+            public_origin: "http://localhost:3000".into(),
         })
     }
 }
@@ -172,8 +248,21 @@ pub fn router(app: App) -> Router {
                 )
             }),
         )
+        .route(
+            "/link-preview-v1.png",
+            get(|| async {
+                (
+                    [
+                        (header::CONTENT_TYPE, "image/png"),
+                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                    ],
+                    &include_bytes!("../web/link-preview-v1.png")[..],
+                )
+            }),
+        )
         .route("/", get(index))
         .route("/game/{id}", get(index))
+        .route("/invite/{id}", get(index))
         .route(
             "/app.js",
             get(|| async {
@@ -211,19 +300,80 @@ pub fn router(app: App) -> Router {
         .route("/api/me", get(me))
         .route("/api/games", post(create))
         .route("/api/games/{id}", get(read))
+        .route("/api/games/{id}/invite", get(invite_status))
         .route("/api/games/{id}/join", post(join))
         .route("/api/games/{id}/actions", post(act))
         .route("/api/games/{id}/rematch", post(rematch))
         .route("/api/games/{id}/events", get(events))
         .route("/health", get(|| async { "ok" }))
+        .layer(axum::middleware::from_fn_with_state(app.clone(), admission))
         .with_state(app)
 }
 
-async fn index() -> impl IntoResponse {
-    asset(
-        "text/html; charset=utf-8",
-        include_str!("../web/index.html"),
+async fn index(State(app): State<App>, OriginalUri(uri): OriginalUri) -> Response {
+    let invite = uri.path().starts_with("/invite/");
+    let title = if invite {
+        "You’re invited to the quilt"
+    } else if uri.path().starts_with("/game/") {
+        "A quilt for two"
+    } else {
+        "Cats, quilts & a little strategy"
+    };
+    let description = if invite {
+        "Join your partner for a cozy game of cats and strategy."
+    } else {
+        "A cozy game of cats and strategy for two."
+    };
+    let image = format!("{}/link-preview-v1.png", app.public_origin);
+    let url = format!("{}{}", app.public_origin, uri.path());
+    let alt = "Peach and sage cats cuddling on a stitched blue quilt";
+    let mut metadata = String::new();
+    for (property, value) in [
+        ("og:type", "website"),
+        ("og:site_name", "Quiltfall"),
+        ("og:title", title),
+        ("og:description", description),
+        ("og:url", &url),
+        ("og:image", &image),
+        ("og:image:type", "image/png"),
+        ("og:image:width", "1200"),
+        ("og:image:height", "630"),
+        ("og:image:alt", alt),
+    ] {
+        metadata.push_str(&format!(
+            "<meta property=\"{property}\" content=\"{}\" />\n",
+            escape_attribute(value)
+        ));
+    }
+    for (name, value) in [
+        ("twitter:card", "summary_large_image"),
+        ("twitter:title", title),
+        ("twitter:description", description),
+        ("twitter:image", &image),
+        ("twitter:image:alt", alt),
+    ] {
+        metadata.push_str(&format!(
+            "<meta name=\"{name}\" content=\"{}\" />\n",
+            escape_attribute(value)
+        ));
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        include_str!("../web/index.html").replace("<!-- link-preview -->", &metadata),
     )
+        .into_response()
+}
+
+fn escape_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 fn asset(content_type: &'static str, body: &'static str) -> impl IntoResponse {
@@ -269,13 +419,24 @@ fn cookie_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 async fn identity(conn: &mut SqliteConnection, headers: &HeaderMap) -> Result<Player, ApiError> {
-    let token = cookie_token(headers)
-        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "Enter your name to join."))?;
+    let token = cookie_token(headers).ok_or_else(|| {
+        ApiError::coded(
+            StatusCode::UNAUTHORIZED,
+            "session_missing",
+            "This browser no longer has your game session.",
+        )
+    })?;
     let row = sqlx::query("SELECT id,name FROM players WHERE token_hash=?")
         .bind(token_hash(token))
         .fetch_optional(conn)
         .await?
-        .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "Enter your name to join."))?;
+        .ok_or_else(|| {
+            ApiError::coded(
+                StatusCode::UNAUTHORIZED,
+                "session_invalid",
+                "This browser’s game session could not be recognized.",
+            )
+        })?;
     Ok(Player {
         id: row.get("id"),
         name: row.get("name"),
@@ -297,7 +458,7 @@ async fn identity_or_create(
     }
     match identity(conn, headers).await {
         Ok(player) => return Ok((player, HeaderMap::new())),
-        Err(error) if error.status == StatusCode::UNAUTHORIZED => {}
+        Err(error) if error.code == Some("session_missing") => {}
         Err(error) => return Err(error),
     }
     let token = Uuid::new_v4().simple().to_string();
@@ -327,7 +488,7 @@ async fn identity_or_create(
 async fn load_game(conn: &mut SqliteConnection, id: &str) -> Result<Game, ApiError> {
     let row = sqlx::query("SELECT g.*,h.name AS host_name,p.name AS guest_name FROM games g JOIN players h ON h.id=g.host_id LEFT JOIN players p ON p.id=g.guest_id WHERE g.id=?")
         .bind(id).fetch_optional(conn).await?
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND,"That game link was not found."))?;
+        .ok_or_else(|| ApiError::coded(StatusCode::NOT_FOUND,"game_not_found","That game link was not found."))?;
     let mut players = vec![Player {
         id: row.get("host_id"),
         name: row.get("host_name"),
@@ -359,8 +520,9 @@ fn seat(game: &Game, player: &Player) -> Result<usize, ApiError> {
         .iter()
         .position(|p| p.id == player.id)
         .ok_or_else(|| {
-            ApiError::new(
+            ApiError::coded(
                 StatusCode::FORBIDDEN,
+                "not_a_member",
                 "This game belongs to two other players.",
             )
         })
@@ -429,7 +591,11 @@ async fn join(
             .into_response());
     }
     if game.players.len() == 2 {
-        return Err(ApiError::new(StatusCode::CONFLICT, "Both seats are taken."));
+        return Err(ApiError::coded(
+            StatusCode::CONFLICT,
+            "game_full",
+            "Both seats are taken.",
+        ));
     }
     sqlx::query("UPDATE games SET guest_id=?,revision=revision+1 WHERE id=?")
         .bind(&player.id)
@@ -456,8 +622,8 @@ async fn join(
 
 async fn authorized_game(app: &App, id: &str, headers: &HeaderMap) -> Result<Snapshot, ApiError> {
     let mut conn = app.pool.acquire().await?;
-    let player = identity(&mut conn, headers).await?;
     let game = load_game(&mut conn, id).await?;
+    let player = identity(&mut conn, headers).await?;
     let you = seat(&game, &player)?;
     Ok(Snapshot {
         game,
@@ -487,6 +653,7 @@ async fn act(
     if game.revision != input.revision {
         return Err(ApiError {
             status: StatusCode::CONFLICT,
+            code: None,
             message: "The board has changed. Try again on the updated board.".into(),
             current: Some(Box::new(Snapshot {
                 game,
@@ -565,6 +732,7 @@ async fn rematch(
     if game.revision != input.revision {
         return Err(ApiError {
             status: StatusCode::CONFLICT,
+            code: None,
             message: "The rematch offer has changed. Check the updated offer.".into(),
             current: Some(Box::new(Snapshot {
                 game,
@@ -682,13 +850,20 @@ async fn events(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     // Subscribe first so a move committed while the snapshot is loading is queued.
     let mut rx = app.updates.subscribe();
+    let mut shutdown = app.shutdown.subscribe();
     let initial = authorized_game(&app, &id, &headers).await?;
     let you = initial.you;
     let mut revision = initial.game.revision;
     let stream = async_stream::stream! {
         yield Ok(snapshot_event(&initial));
         loop {
-            let next = match rx.recv().await {
+            if *shutdown.borrow() { break; }
+            let notice = tokio::select! {
+                biased;
+                _ = shutdown.changed() => break,
+                notice = rx.recv() => notice,
+            };
+            let next = match notice {
                 Ok(notice) if notice.game.id == id => Snapshot { game:notice.game,you,effects:notice.effects },
                 Ok(_) => continue,
                 Err(broadcast::error::RecvError::Lagged(_)) => match authorized_game(&app,&id,&headers).await {
@@ -711,4 +886,55 @@ fn snapshot_event(snapshot: &Snapshot) -> Event {
         .event("snapshot")
         .id(snapshot.game.revision.to_string())
         .data(serde_json::to_string(snapshot).expect("game snapshot serializes"))
+}
+
+async fn invite_status(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let guest: Option<String> = sqlx::query_scalar("SELECT guest_id FROM games WHERE id=?")
+        .bind(id)
+        .fetch_optional(&app.pool)
+        .await?
+        .ok_or_else(|| {
+            ApiError::coded(
+                StatusCode::NOT_FOUND,
+                "game_not_found",
+                "That game link was not found.",
+            )
+        })?;
+    Ok((
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(json!({"joinable":guest.is_none()})),
+    ))
+}
+
+async fn admission(
+    State(app): State<App>,
+    request: Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if *app.shutdown.borrow() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Server restarting. Please retry.",
+        )
+            .into_response();
+    }
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|path| path.as_str())
+        .unwrap_or("unmatched")
+        .to_owned();
+    let cookie_present = cookie_token(request.headers()).is_some();
+    let response = next.run(request).await;
+    tracing::info!(
+        route,
+        status = response.status().as_u16(),
+        cookie_present,
+        machine = std::env::var("FLY_MACHINE_ID").unwrap_or_else(|_| "local".into()),
+        "request completed"
+    );
+    response
 }

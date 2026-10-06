@@ -81,6 +81,7 @@ into the binary, so rebuild and restart after changing files in `web/`.
 | `BIND_ADDR` | `0.0.0.0:3000` | Listen address, reachable on the local network |
 | `DATABASE_URL` | `sqlite://data/quiltfall.db` | SQLite file; custom parent directories must exist |
 | `COOKIE_SECURE` | `false` | Set to `true` for HTTPS hosting |
+| `PUBLIC_ORIGIN` | `http://localhost:3000` | Public HTTP(S) origin for link previews |
 | `RUST_LOG` | `info` | Server log level |
 
 To use another port on macOS or Linux:
@@ -130,55 +131,116 @@ port, or run `curl http://localhost:3000/health`. A healthy server replies `ok`.
 
 The deployed app is [quiltfall.fly.dev](https://quiltfall.fly.dev).
 
-The included Dockerfile embeds the browser assets into the Rust binary. The Fly
-configuration uses **one shared CPU, 256 MB RAM**, in `iad`, with HTTPS and
-**no persistent volume**. SQLite uses `/tmp/quiltfall.db` on the machine's
-unmounted, temporary filesystem.
+Production runs one static LiteFS primary in `iad`, with one shared CPU and
+256 MiB RAM. The encrypted 1 GB `quiltfall_data` Fly volume is mounted at
+`/data`; LiteFS stores its replication files in `/data/litefs` and exposes
+`/litefs/quiltfall.db` to the app. Keep exactly one machine. There is no replica
+or automatic failover. Local `cargo run` still uses `data/quiltfall.db`.
 
-Games, browser identities, rematch offers, and stats are temporary on Fly.
-They may be lost when the machine is restarted, redeployed, migrated, or
-replaced. Browser cookies can remain after server data is lost; open the home
-page and start a new game if an old invite no longer exists. Local play still
-uses `data/quiltfall.db` and the backup instructions above.
+Accepted moves, sessions, rematches and results survive container replacement.
+SIGTERM rejects new requests, closes event streams and drains admitted requests
+for up to ten seconds. Open game tabs pause and automatically read the latest
+saved snapshot before reconnecting. A redeploy can briefly interrupt connections.
+Keep the same browser and its cookie: a name cannot recover a lost session.
+`/game/:id` resumes a participant; `/invite/:id` offers the second seat explicitly.
 
-The machine stops when idle and starts on the next request. The first visit may
-take a few seconds. A visible game keeps an event stream open, so close game
-tabs when done. Fly charges for compute and outbound traffic; this setup does
-not provision paid volumes or a dedicated IPv4 address. Check
-[current pricing](https://docs.fly.io/about/pricing).
+The runtime contains only Alpine, FUSE, certificates, LiteFS and the static app.
+Its startup refuses an absent volume, FUSE mount, marker or database. Never
+replace a missing production database with an empty one automatically.
 
-Install [flyctl](https://docs.fly.io/flyctl/install), then deploy from the
-repository root:
+### Local build and release gate
+
+Docker/Colima is required. Every release must preserve stored GameState JSON and
+snapshot/action formats used by the previously loaded frontend. Capture the last
+compatible image as `quiltfall:local-previous` before building the next version.
+The container gate runs that frontend against the new server across replacement,
+with no refresh or mutation replay. Keep persisted phase/session fixtures too.
 
 ```sh
-flyctl auth login
-# For a new account/app, choose a globally unique name:
-flyctl apps create YOUR-UNIQUE-APP-NAME --org personal
-# Set app = "YOUR-UNIQUE-APP-NAME" at the top of fly.toml.
-flyctl ips allocate-v6
-flyctl ips allocate-v4 --shared
-flyctl deploy --remote-only --ha=false
-flyctl open
+cargo build --locked
+cargo test --locked
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+npm test
+npm run lint
+npm run format:check
+npm run test:browser
+docker --context colima buildx build --builder colima --platform linux/amd64 \
+  --load --tag quiltfall:local .
+CONTAINER_PREVIOUS_IMAGE=quiltfall:local-previous npm run test:container
 ```
 
-For the already-created app named in `fly.toml`, skip app creation and IP
-allocation; use `flyctl deploy --remote-only --ha=false` for updates. The remote
-builder means Docker does not need to be installed on your computer.
+Container tests use disposable named volumes, `/dev/fuse`, `SYS_ADMIN` and
+`apparmor=unconfined`; cap RAM and swap at 256 MiB. They check missing storage,
+bootstrap, graceful shutdown, forced crash, retained identities/state/results,
+open-tab automatic resume, lost HTTP replies and image size budgets. To test
+public routes against an already-running container, use
+`PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npx playwright test tests/browser/invite.spec.js`.
+The full play suite uses its own isolated local SQLite fixture database.
 
-Keep exactly one app machine: each machine has its own temporary database.
-Do not add a volume, managed database, or additional app machines to this setup.
-
-To inspect the deployment:
+Deploy the exact locally tested image; do not rebuild remotely:
 
 ```sh
-flyctl status
+flyctl auth docker
+docker --context colima tag quiltfall:local registry.fly.io/quiltfall:RELEASE_TAG
+docker --context colima push registry.fly.io/quiltfall:RELEASE_TAG
+# Use the immutable digest printed by push:
+RELEASE_IMAGE=registry.fly.io/quiltfall@sha256:TESTED_DIGEST npm run deploy
 flyctl checks list
-flyctl machine list
-flyctl volumes list
 ```
 
-The volumes list should be empty. Local player identities do not transfer to
-Fly because cookies are scoped to the hostname; start fresh on the public URL.
+The deploy script exports and verifies a backup, opens two desktop WebKit tabs
+over HTTPS, then deploys and checks automatic resume and continued play. It
+creates a small finished smoke game. Run the local release gate first.
+
+Use SIGTERM and the configured 15-second timeout. Attached volumes support
+rolling deployments, not blue-green/canary. Before each release, export a
+consistent backup outside FUSE and download it to private storage:
+
+```sh
+flyctl ssh console -C 'litefs export -name quiltfall.db /data/predeploy.db'
+flyctl ssh sftp get /data/predeploy.db ./PRIVATE_BACKUP.db
+```
+
+Verify `PRAGMA integrity_check` locally. Fly takes daily volume snapshots (retain
+five days); these complement an external backup. Never roll back to a /tmp
+image, detach the volume, or restore a stale backup over newer accepted moves.
+Roll back only to a compatible image against the same mounted database.
+
+### Initial migration or disaster recovery
+
+Preserve the current live database **before replacing its machine**. For an old
+/tmp deployment, use SQLite's backup API, not a raw copy of a live file. During
+cutover acquire `BEGIN IMMEDIATE`, freeze the actual app PID while that writer
+lock is held, release the lock, then `.backup` the database (including WAL).
+Download and integrity-check the backup; retain the original machine until it
+is safe to replace. Resume its PID if any step fails before cutover.
+
+Provision the encrypted volume in `iad`:
+
+```sh
+flyctl volumes create quiltfall_data --region iad --size 1 --snapshot-retention 5
+```
+
+The first migration deploy uses `--env QUILTFALL_BOOTSTRAP=1 --strategy immediate`.
+LiteFS mounts, but the app waits until `/data/.quiltfall-initialized` exists.
+Upload a verified SQLite backup to `/data/import/quiltfall.db` **outside FUSE**,
+then run `litefs import -name quiltfall.db /data/import/quiltfall.db`. Import
+replaces that database: never use it during an ordinary deployment. Export the
+imported database, download it and compare integrity, players/token hashes,
+games, revisions, phase JSON, rematches and stats with the original. Only then
+create `/data/.quiltfall-initialized`. The app applies migrations and validates
+all saved games before health becomes ready. Remove the bootstrap environment
+and deploy the same tested image normally; prove two open tabs resume.
+
+For a deliberately new empty server, explicitly create and import a valid empty
+SQLite database and verify it before creating the marker. A marker without the
+DB causes startup to fail. Store staged imports/backups outside `/litefs`.
+
+`PUBLIC_ORIGIN` must be an HTTP(S) origin with no path, credentials, query or
+fragment. Fly sets `https://quiltfall.fly.dev`; local default is
+`http://localhost:3000`. Link previews use that configured origin, require no
+cookie or JavaScript, and never reveal player names or game state.
 
 ## Development
 

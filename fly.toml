@@ -1,4 +1,6 @@
-# Run one small machine with temporary SQLite storage and no volume.
+# One static LiteFS primary. Keep this volume across every deployment.
+kill_signal = "SIGTERM"
+kill_timeout = 15
 app = "quiltfall"
 primary_region = "iad"
 
@@ -7,9 +9,14 @@ primary_region = "iad"
 
 [env]
   BIND_ADDR = "0.0.0.0:8080"
-  DATABASE_URL = "sqlite:///tmp/quiltfall.db"
+  DATABASE_URL = "sqlite:///litefs/quiltfall.db"
   COOKIE_SECURE = "true"
   RUST_LOG = "info"
+  PUBLIC_ORIGIN = "https://quiltfall.fly.dev"
+
+[[mounts]]
+  source = "quiltfall_data"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080

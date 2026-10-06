@@ -21,14 +21,14 @@ async function createPair(
   const errors = [];
   host.on("pageerror", (error) => errors.push(error.message));
   guest.on("pageerror", (error) => errors.push(error.message));
-  await host.goto("http://127.0.0.1:3001/");
+  await host.goto("/");
   await host.getByLabel("Your name").fill(hostName);
   await host.getByRole("button", { name: "Start a game" }).click();
   await expect(
     host.getByRole("heading", { name: "Waiting for your partner…" }),
   ).toBeVisible();
   const url = host.url();
-  await guest.goto(url);
+  await guest.goto(await host.getByLabel("Invite link").inputValue());
   await guest.getByLabel("Your name").fill(guestName);
   await guest.getByRole("button", { name: "Join the quilt" }).click();
   await expect(host.locator("#connection")).toContainText("Connected");
@@ -46,13 +46,13 @@ test("long player names fit a 320px board without horizontal scrolling", async (
   const host = await a.newPage();
   const guest = await b.newPage();
   const name = "W".repeat(32);
-  await host.goto("http://127.0.0.1:3001/");
+  await host.goto("/");
   await host.getByLabel("Your name").fill(name);
   await host.getByRole("button", { name: "Start a game" }).click();
   await expect(
     host.getByRole("heading", { name: "Waiting for your partner…" }),
   ).toBeVisible();
-  await guest.goto(host.url());
+  await guest.goto(await host.getByLabel("Invite link").inputValue());
   await guest.getByLabel("Your name").fill(name);
   await guest.getByRole("button", { name: "Join the quilt" }).click();
   await expect(host.locator("#connection")).toContainText("Connected");
@@ -118,7 +118,7 @@ test("two phones play, reconnect, resign and see saved results", async ({
   await host.reload();
   await expect(host.locator(".board-footnote")).toContainText("MOVE 2");
   await pair.guestContext.setOffline(true);
-  await expect(guest.locator("#connection")).toContainText("Reconnecting");
+  await expect(guest.locator("#connection")).toContainText("Offline");
   await pair.guestContext.setOffline(false);
   await expect(guest.locator("#connection")).toContainText("Connected");
   await guest.getByRole("button", { name: "Resign this game" }).click();
@@ -639,7 +639,7 @@ test("hiding the page cancels motion and resumes from the saved board", async ({
     });
     document.dispatchEvent(new Event("visibilitychange"));
   });
-  await expect(pair.host.locator("#connection")).toContainText("Reconnecting");
+  await expect(pair.host.locator("#connection")).toContainText("Paused");
   expect(
     await pair.host.evaluate(() => window.motionLog[0].animation.playState),
   ).toBe("idle");
@@ -700,7 +700,7 @@ test("the eighth kitten lets you tap a piece directly after refresh", async ({
   await pair.host.reload();
   await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
   await pair.hostContext.setOffline(true);
-  await expect(pair.host.locator("#connection")).toContainText("Reconnecting");
+  await expect(pair.host.locator("#connection")).toContainText("Offline");
   await expect(pair.host.locator(".square:enabled")).toHaveCount(0);
   await pair.hostContext.setOffline(false);
   await expect(pair.host.locator("#connection")).toContainText("Connected");

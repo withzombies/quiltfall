@@ -61,6 +61,173 @@ async fn app() -> (App, Router) {
     let router = router(state.clone());
     (state, router)
 }
+
+#[tokio::test]
+async fn previews_are_public_configured_and_have_no_database_side_effects() {
+    let (state, router) = app().await;
+    for (path, title) in [
+        ("/", "Cats, quilts &amp; a little strategy"),
+        ("/invite/private?tracking=1", "You’re invited to the quilt"),
+        ("/game/private", "A quilt for two"),
+    ] {
+        let response = request(&router, "GET", path, "", json!(null)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key("set-cookie"));
+        let html = String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(html.contains(&format!("property=\"og:title\" content=\"{title}\"")));
+        assert!(html.contains("http://localhost:3000/link-preview-v1.png"));
+        assert!(html.contains("summary_large_image"));
+        assert!(!html.contains("tracking=1"));
+        assert!(html.contains("property=\"og:image:width\" content=\"1200\""));
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM players")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    let image = request(&router, "GET", "/link-preview-v1.png", "", json!(null)).await;
+    assert_eq!(image.headers()["content-type"], "image/png");
+    assert!(
+        image.headers()["cache-control"]
+            .to_str()
+            .unwrap()
+            .contains("immutable")
+    );
+    let bytes = image.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
+    assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 1200);
+    assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 630);
+    assert!(bytes.len() < 1024 * 1024);
+}
+
+#[tokio::test]
+async fn draining_rejects_new_requests_and_ends_open_event_streams() {
+    let (state, router) = app().await;
+    let (id, cookie, _) = create(&router, "Host").await;
+    let response = request(
+        &router,
+        "GET",
+        &format!("/api/games/{id}/events"),
+        &cookie,
+        json!(null),
+    )
+    .await;
+    let mut stream = response.into_body();
+    assert!(stream.frame().await.unwrap().is_ok());
+    state.begin_shutdown();
+    assert_eq!(
+        request(&router, "GET", "/health", "", json!(null))
+            .await
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert_eq!(
+        request(&router, "POST", "/api/games", "", json!({"name":"New"}))
+            .await
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), stream.frame())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn startup_refuses_undecodable_saved_games() {
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("games.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let (_, _, _) = create(&router(state.clone()), "Host").await;
+    sqlx::query("UPDATE games SET state='{}'")
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    state.pool.close().await;
+    assert!(App::open(&url, false).await.is_err());
+}
+
+#[tokio::test]
+async fn invite_status_is_public_but_resume_requires_the_original_member() {
+    let (state, router) = app().await;
+    let (id, host, original) = create(&router, "Host").await;
+    let path = format!("/api/games/{id}");
+    let invite = format!("{path}/invite");
+    let response = request(&router, "GET", &invite, "", json!(null)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert_eq!(body(response).await, json!({"joinable":true}));
+    for (cookie, code) in [
+        ("", "session_missing"),
+        ("quiltfall_session=invalid", "session_invalid"),
+    ] {
+        let response = request(&router, "GET", &path, cookie, json!(null)).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body(response).await["code"], code);
+    }
+    let (_, outsider, _) = create(&router, "Other").await;
+    let response = request(&router, "GET", &path, &outsider, json!(null)).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(body(response).await["code"], "not_a_member");
+    assert_eq!(snapshot(&router, &id, &host).await, original);
+    let invalid = request(
+        &router,
+        "POST",
+        &format!("{path}/join"),
+        "quiltfall_session=invalid",
+        json!({"name":"Replacement"}),
+    )
+    .await;
+    assert_eq!(invalid.status(), StatusCode::UNAUTHORIZED);
+    assert!(!invalid.headers().contains_key("set-cookie"));
+    assert_eq!(body(invalid).await["code"], "session_invalid");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM players")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        2
+    );
+    join(&router, &id, "Guest").await;
+    assert_eq!(
+        body(request(&router, "GET", &invite, "", json!(null)).await).await,
+        json!({"joinable":false})
+    );
+    let full = request(
+        &router,
+        "POST",
+        &format!("{path}/join"),
+        &outsider,
+        json!({"name":"Other"}),
+    )
+    .await;
+    assert_eq!(body(full).await["code"], "game_full");
+    for suffix in ["", "/events", "/invite"] {
+        let missing = request(
+            &router,
+            "GET",
+            &format!("/api/games/missing{suffix}"),
+            "",
+            json!(null),
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body(missing).await["code"], "game_not_found");
+    }
+}
 async fn request(
     router: &Router,
     method: &str,
@@ -726,4 +893,132 @@ async fn rematch_stream_broadcasts_pending_and_accepted_snapshots() {
     let update = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
     assert!(update.contains(accepted["game"]["rematch"]["game_id"].as_str().unwrap()));
     assert!(update.contains("\"revision\":4"));
+}
+
+#[tokio::test]
+async fn draining_allows_an_already_admitted_mutation_to_commit() {
+    let (state, router) = app().await;
+    let (admitted, reached) = tokio::sync::oneshot::channel();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let stream = async_stream::stream! {
+        admitted.send(()).unwrap();
+        waiting.await.unwrap();
+        yield Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"{\"name\":\"Admitted\"}"));
+    };
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/games")
+        .header("content-type", "application/json")
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let response = tokio::spawn(router.oneshot(request));
+    reached.await.unwrap();
+    state.begin_shutdown();
+    release.send(()).unwrap();
+    assert_eq!(
+        response.await.unwrap().unwrap().status(),
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM games")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn public_origin_rejects_non_origins_and_ignores_host_headers() {
+    for origin in [
+        "ftp://example.com",
+        "https://name:pass@example.com",
+        "https://example.com/path",
+        "https://example.com?x=1",
+        "https://example.com/#fragment",
+        "https://example.com:99999",
+    ] {
+        assert!(
+            App::open("sqlite::memory:", false)
+                .await
+                .unwrap()
+                .with_public_origin(origin)
+                .is_err(),
+            "{origin}"
+        );
+    }
+    let app = App::open("sqlite::memory:", false)
+        .await
+        .unwrap()
+        .with_public_origin("https://quiltfall.example/")
+        .unwrap();
+    let response = router(app)
+        .oneshot(
+            Request::builder()
+                .uri("/invite/a%22b?secret=yes")
+                .header("host", "attacker.example")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let html = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(html.contains("https://quiltfall.example/link-preview-v1.png"));
+    assert!(!html.contains("attacker.example"));
+    assert!(!html.contains("secret=yes"));
+}
+
+#[tokio::test]
+async fn previous_saved_state_formats_remain_readable_and_playable() {
+    let fixtures: Value =
+        serde_json::from_str(include_str!("fixtures/game-states-v1.json")).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", dir.path().join("games.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let routes = router(state.clone());
+    let mut saves = vec![];
+    for (phase, saved) in fixtures.as_object().unwrap() {
+        let (id, host, _) = create(&routes, "Original host").await;
+        join(&routes, &id, "Original guest").await;
+        sqlx::query("UPDATE games SET state=? WHERE id=?")
+            .bind(saved.to_string())
+            .bind(&id)
+            .execute(&state.pool)
+            .await
+            .unwrap();
+        saves.push((id, host, phase.clone(), saved.clone()));
+    }
+    state.pool.close().await;
+    let reopened = App::open(&url, false).await.unwrap();
+    let routes = router(reopened);
+    for (id, cookie, phase, saved) in saves {
+        let snap = snapshot(&routes, &id, &cookie).await;
+        assert_eq!(snap["game"]["state"], saved);
+        if phase == "graduation" {
+            let response = request(&routes, "POST", &format!("/api/games/{id}/actions"), &cookie, json!({"revision":snap["game"]["revision"], "action":{"type":"graduate","pieces":[0,1,2]}})).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                body(response).await["game"]["state"]["phase"]["type"],
+                "placement"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn existing_database_mode_never_creates_a_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("missing.db");
+    let url = format!("sqlite://{}", path.display());
+    assert!(App::open_existing(&url, false).await.is_err());
+    assert!(!path.exists());
 }

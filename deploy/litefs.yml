@@ -1,0 +1,14 @@
+fuse:
+  dir: /litefs
+data:
+  dir: /data/litefs
+exit-on-error: true
+lease:
+  type: static
+  candidate: true
+  hostname: quiltfall-primary
+  advertise-url: http://127.0.0.1:20202
+http:
+  addr: 127.0.0.1:20202
+exec:
+  - cmd: /usr/local/bin/start-app
