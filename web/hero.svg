@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 400">
   <defs>
     <pattern id="quilt" width="88" height="88" patternUnits="userSpaceOnUse">
-      <rect width="88" height="88" fill="#e6cfa8"/>
-      <path d="M0 0h44v44H0Zm44 44h44v44H44Z" fill="#b3b8a1"/>
-      <path d="M44 0h44v44H44Zm-44 44h44v44H0Z" fill="#e1ab93"/>
-      <path d="M22 0v88M66 0v88M0 22h88M0 66h88" stroke="#fff7e8" stroke-width="1.5" stroke-dasharray="3 4" opacity=".6"/>
-      <path d="m6 6 32 32m0-32L6 38m44 12 32 32m0-32L50 82" stroke="#f6eedc" stroke-width="1" opacity=".35"/>
+      <rect width="88" height="88" fill="#e7eef3"/>
+      <path d="M0 0h44v44H0Zm44 44h44v44H44Z" fill="#e7eef3"/>
+      <path d="M44 0h44v44H44Zm-44 44h44v44H0Z" fill="#b9cede"/>
+      <path d="M22 0v88M66 0v88M0 22h88M0 66h88" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="3 4" opacity=".6"/>
+      <path d="m6 6 32 32m0-32L6 38m44 12 32 32m0-32L50 82" stroke="#eef3f7" stroke-width="1" opacity=".35"/>
     </pattern>
     <filter id="sage"><feColorMatrix type="matrix" values=".5 .3 0 0 0 .1 .65 0 0 .08 0 .15 .6 0 .05 0 0 0 1 0"/></filter>
 <symbol id="cat" viewBox="0 0 100 100">  <g stroke="#705044" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
@@ -39,7 +39,7 @@
   <g transform="translate(26 52) rotate(-7 200 145)">
     <rect x="15" y="28" width="360" height="279" rx="26" fill="#aa8060"/>
     <rect x="15" y="12" width="360" height="279" rx="26" fill="#d1ad87" stroke="#8f765c" stroke-width="2"/>
-    <rect x="27" y="25" width="336" height="250" rx="19" fill="url(#quilt)" stroke="#f4e9d3" stroke-width="7"/>
+    <rect x="27" y="25" width="336" height="250" rx="19" fill="url(#quilt)" stroke="#eef3f7" stroke-width="7"/>
     <rect x="24" y="22" width="342" height="258" rx="20" fill="none" stroke="#9f8067" stroke-dasharray="3 4"/>
     <use href="#cat" x="59" y="47" width="88" height="88" transform="rotate(9 103 91)"/>
     <use href="#adult" x="174" y="138" width="100" height="100" transform="rotate(9 224 188)"/>

@@ -7,6 +7,8 @@
   --line: #deded0;
   --peach: #dbab90;
   --sage: #a8b39b;
+  --quilt-light: #e7eef3;
+  --quilt-blue: #b9cede;
   --serif: Georgia, "Times New Roman", serif;
   font-family:
     ui-sans-serif,
@@ -432,9 +434,9 @@ input:disabled {
 .quilt {
   aspect-ratio: 1;
   position: relative;
-  border: 3px solid #f4ead5;
+  border: 3px solid #eef3f7;
   border-radius: 9px;
-  background: #ead6b2;
+  background: var(--quilt-light);
 }
 .board {
   width: 100%;
@@ -449,7 +451,7 @@ input:disabled {
   position: relative;
   border: 0;
   outline-offset: -4px !important;
-  background: #e4c99f;
+  background: var(--quilt-light);
   padding: 0;
   opacity: 1;
 }
@@ -459,13 +461,13 @@ input:disabled {
 .square:nth-child(12n + 7),
 .square:nth-child(12n + 9),
 .square:nth-child(12n + 11) {
-  background: #aebaa3;
+  background: var(--quilt-blue);
 }
 .square:after {
   content: "";
   position: absolute;
   inset: 4px;
-  border: 1px dashed #fbf4df78;
+  border: 1px dashed #ffffff80;
   border-radius: 3px;
   pointer-events: none;
 }
@@ -489,13 +491,13 @@ input:disabled {
 }
 .square.chosen {
   box-shadow: inset 0 0 0 3px #4c6450;
-  background: #d1d9b8;
+  background: #ccdceb;
 }
 .square.chosen:before {
   content: "";
   position: absolute;
   inset: 0;
-  background: #fff5c545;
+  background: #ffffff30;
 }
 .pieces-layer {
   position: absolute;
@@ -986,8 +988,11 @@ dialog h2 {
   width: 100%;
   height: 47px;
   border-radius: 50%;
-  background: repeating-conic-gradient(#d7dfc8 0% 25%, #e9e9d4 0% 50%) 50% /
-    40px 40px;
+  background: repeating-conic-gradient(
+      var(--quilt-blue) 0% 25%,
+      var(--quilt-light) 0% 50%
+    )
+    50% / 40px 40px;
   border-bottom: 5px solid #b69877;
   transform: perspective(180px) rotateX(24deg);
 }

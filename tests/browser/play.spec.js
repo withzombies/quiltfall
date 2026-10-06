@@ -239,7 +239,7 @@ async function finishMotion(page, index) {
   await page.evaluate((i) => window.motionLog[i].animation.finish(), index);
 }
 
-test("quilt alternates cream and sage without striped columns", async ({
+test("quilt alternates ice and dusty blue without striped columns", async ({
   browser,
 }) => {
   const pair = await createPair(browser);
@@ -248,7 +248,10 @@ test("quilt alternates cream and sage without striped columns", async ({
     .evaluateAll((nodes) =>
       nodes.map((node) => getComputedStyle(node).backgroundColor),
     );
-  expect(new Set(colors).size).toBe(2);
+  expect([...new Set(colors)]).toEqual([
+    "rgb(231, 238, 243)",
+    "rgb(185, 206, 222)",
+  ]);
   for (let y = 0; y < 6; y++) {
     for (let x = 0; x < 6; x++)
       expect(colors[y * 6 + x]).toBe(colors[(x + y) % 2]);
