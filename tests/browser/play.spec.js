@@ -35,6 +35,48 @@ async function createPair(browser) {
   return { host, guest, hostContext, guestContext, id, errors };
 }
 
+test("long player names fit a 320px board without horizontal scrolling", async ({
+  browser,
+}) => {
+  const a = await browser.newContext({ viewport: { width: 320, height: 780 } });
+  const b = await browser.newContext({ viewport: { width: 320, height: 780 } });
+  const host = await a.newPage();
+  const guest = await b.newPage();
+  const name = "W".repeat(32);
+  await host.goto("http://127.0.0.1:3001/");
+  await host.getByLabel("Your name").fill(name);
+  await host.getByRole("button", { name: "Start a game" }).click();
+  await expect(
+    host.getByRole("heading", { name: "Waiting for your partner…" }),
+  ).toBeVisible();
+  await guest.goto(host.url());
+  await guest.getByLabel("Your name").fill(name);
+  await guest.getByRole("button", { name: "Join the quilt" }).click();
+  await expect(host.locator("#connection")).toContainText("Connected");
+  await expect(guest.locator("#connection")).toContainText("Connected");
+  for (const page of [host, guest]) {
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= 320),
+    ).toBe(true);
+    expect(
+      (await page.locator(".square").first().boundingBox()).width,
+    ).toBeGreaterThanOrEqual(44);
+  }
+  await host.getByRole("button", { name: "Resign this game" }).click();
+  await host.getByRole("button", { name: "Resign", exact: true }).click();
+  await expect(host.locator(".result-card")).toBeVisible();
+  expect(
+    await host.evaluate(() => document.documentElement.scrollWidth <= 320),
+  ).toBe(true);
+  await host.getByRole("link", { name: "Your games" }).click();
+  await host.getByRole("tab", { name: "Past games" }).click();
+  expect(
+    await host.evaluate(() => document.documentElement.scrollWidth <= 320),
+  ).toBe(true);
+  await a.close();
+  await b.close();
+});
+
 test("two phones play, reconnect, resign and see saved results", async ({
   browser,
 }, testInfo) => {
@@ -64,7 +106,8 @@ test("two phones play, reconnect, resign and see saved results", async ({
   });
   expect(
     await host.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
+      (width) => document.documentElement.scrollWidth <= width,
+      host.viewportSize().width,
     ),
   ).toBe(true);
   const square = await host.locator(".square").first().boundingBox();
@@ -152,9 +195,7 @@ test("design fits narrow screens, loads art, and respects reduced motion", async
     page.getByRole("button", { name: "Start a game" }),
   ).toBeVisible();
   expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= innerWidth,
-    ),
+    await page.evaluate(() => document.documentElement.scrollWidth <= 320),
   ).toBe(true);
   expect(
     await page

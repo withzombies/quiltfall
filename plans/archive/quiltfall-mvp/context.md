@@ -8,19 +8,32 @@
   moving to another address does not recover the old identity.
 - Local computer must stay running and phones must reach it over the LAN.
 
-## Resume here
-Rules implemented after missing-engine RED; 15 tests pass, build/fmt/Clippy pass.
-Implement the persistence/HTTP layer from failing integration tests.
-Continue through the approved plan; update these docs at each slice boundary.
+## Completion evidence — October 6, 2026
+Implementation reviewed against every acceptance check in plan.md. Complete:
+- 15 rule tests and 11 HTTP/persistence tests passed.
+- Six UI helper tests passed.
+- Eight mobile browser tests passed in Chromium and WebKit, including axe
+  audits, two independent players, live nudges, offline reconnect, graduation
+  refresh, resignation/stats, narrow screens and reduced motion.
+- Fresh cargo build/test/fmt/Clippy (warnings denied), npm test/lint (warnings
+  denied)/format and Playwright runs passed before final commit.
+- Reviewed home and board screenshots. Original SVG artwork loads without an
+  external network dependency. CSS libraries and licenses are locally vendored.
+- Maximum-length unbroken names exposed mobile viewport expansion. Regression
+  failed before adding wrapping to headings/history; both engines now pass.
+- README documents local phone play, cookies, backups, developer checks and
+  optional single-machine Fly hosting. Dockerfile embeds all static assets.
+- No anti-goal features or unfinished implementation placeholders found.
 
-Current slice: finish local hosting documentation, Dockerfile and optional Fly
-configuration. UI is complete. In-app browser discovery returned no browsers;
-used isolated local Playwright Chromium and WebKit instead. Six browser tests
-pass; screenshots reviewed at narrow-phone and board sizes. WebKit axe caught
-a selected-button contrast issue; darkened muted text, both browsers now pass.
-UI helpers were RED before implementation; six Node tests pass. Static app and
-CSS libraries were RED (missing routes/links) before implementation. Winner
-animation test was RED before adding Animate.css celebration.
+## Limits
+In-app browser discovery returned no connected browsers; verification used local
+Playwright. Browser emulation still needs a physical-phone user check.
+Docker CLI is unavailable, so container build remains unverified. Fly config was
+parsed and checked locally against its documented settings; remote validation
+requires login. No Fly resources were created or deployment performed.
+Anonymous cookies cannot recover identities after deletion or hostname changes.
+The host computer must remain awake during local play. SQLite uses one connection
+and one deployment machine; no high-availability or replication is implemented.
 
 ## Hosting research
 - https://fly.io/rust/
@@ -43,10 +56,6 @@ broadcasts before fetching the initial snapshot; refetch on channel lag.
 User requested a different name: Quiltfall. Update all product branding, cookie
 names, database defaults and crate name. Web search found no obvious game/app name collision (some unrelated textile uses);
 this is not a formal trademark clearance. Use original SVG illustrations and UI text.
-
-Persistence GREEN: 10 integration tests pass, including competing joins, duplicate
-actions, member authorization, cookie reuse, SQLite restart with pending graduation,
-stats counted once, and SSE initial/committed snapshots. Fresh build/fmt/Clippy pass.
 
 ## UI research
 - https://developer.mozilla.org/en-US/docs/Web/API/Element/animate
