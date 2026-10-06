@@ -1,10 +1,10 @@
 # Evidence
 
 The reported desktop Safari host refresh happened before the guest joined and
-without a server restart. Its cause is unconfirmed. Current code treats all
+without a server restart. Its cause is unconfirmed. Before this change, code treated all
 401/403 reads as an invitation and relies on native EventSource retries; both
-can mislead a host. Create/join currently expose the returned board before
-verifying the browser retained the session cookie. Production SQLite is /tmp.
+could mislead a host. Create/join previously exposed the returned board before
+verifying the browser retained the session cookie. Production SQLite previously lived in /tmp.
 
 Research read before implementation (primary sources):
 - https://github.com/tokio-rs/axum/blob/main/examples/jwt/src/main.rs
@@ -28,8 +28,8 @@ LiteFS forwards termination to its child and waits before unmounting. Use
 exit-on-error=true (verified source, despite misleading sample comment). SQLx
 bundles SQLite; musl permits a static runtime. FUSE works on Colima with
 /dev/fuse, SYS_ADMIN and apparmor=unconfined. Existing AMD64 baseline image was
-built locally: 33.0 MiB content, 96.6 MiB unpacked. Fly has one iad machine,
-8076ddb66e5318, and no volumes; do not replace it before backup.
+built locally: 33.0 MiB content, 96.6 MiB unpacked. Before cutover, Fly had one iad machine,
+8076ddb66e5318, and no volumes; it was not replaced before backup.
 
 No automatic failover, replication, accounts, session recovery credential or
 uninterrupted-availability promise is in scope. A lost cookie explains recovery
@@ -75,7 +75,7 @@ Final AMD64 image locally built and tested with the earlier frontend:
 sha256:cc6fecf43078ab526893ea537574a133a4c050eab4ddec3d625cc3bebf36979b.
 Compressed content 11,540,746 bytes; unpacked filesystem 26,852 KiB. Full
 container gates pass under 256 MiB. The registry push preserved that digest.
-Fly configuration validates. No production machine has yet been replaced.
+Fly configuration validates. At that verification point no production machine had yet been replaced.
 
 Initial cutover completed: consistent /tmp backup integrity-checked, all schema
 and table rows compared after LiteFS import, marker created only after equality.
@@ -102,3 +102,26 @@ refuses valid sessions, preserves every saved row and allows a fresh verified
 identity. All 71 browser cases, 41 Rust cases, six Node cases, lint/format and
 the full container gate pass. New AMD64 tested/pushed digest:
 sha256:fae5f66ca5d93c72f74918f17eb5074279a6921eb8f294eb9627a17ebf630a88.
+
+
+Final production verification: the updated image was deployed by immutable
+index digest fae5f66ca5d93c72f74918f17eb5074279a6921eb8f294eb9627a17ebf630a88.
+The live two-tab desktop WebKit test passed again across that rolling deploy,
+with identity/state/revision equality, zero navigation and a subsequent move.
+A separate HTTPS WebKit context with an invalid cookie clicked Clear old
+session, returned to the usable home form, and verified /api/me now reports
+session_missing. Health passes on machine 80ee651b66d6d8; the encrypted volume
+vol_vwnkz260ye69kx8v remains attached and bootstrap env is absent.
+Final size: 11,546,630 bytes compressed content, 26,872 KiB unpacked. Backups
+are private under ignored backups/; consistent initial import matched every
+schema/table row. First implementation commit 1dace3a; recovery fix 7c6573e.
+Tag redeploy-compatible-20261006 and registry continuity-20261006 retain the
+first compatible persistent runtime. No source or test work remains.
+
+Review against plan: all implemented acceptance gates have fresh passing
+results; no extra replicas/failover, cookie recovery credential, expiration,
+new-account system, mutation replay or public player/state preview was added.
+Original Safari incident remains unexplained; Safari's disabled automation
+setting prevented that browser-specific check. Desktop WebKit over HTTPS,
+including the user's follow-up home-page case, is verified. Existing saves
+must retain compatibility in future releases as documented in deploy/README.md.
