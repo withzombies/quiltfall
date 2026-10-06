@@ -63,6 +63,57 @@ async fn app() -> (App, Router) {
 }
 
 #[tokio::test]
+async fn only_an_explicit_reset_can_clear_an_unrecognized_session() {
+    let (state, router) = app().await;
+    let (id, cookie, original) = create(&router, "Original").await;
+    let input = json!({"reset_invalid_session":true});
+    let valid = request(
+        &router,
+        "POST",
+        "/api/session/reset",
+        &cookie,
+        input.clone(),
+    )
+    .await;
+    assert_eq!(valid.status(), StatusCode::CONFLICT);
+    assert!(!valid.headers().contains_key("set-cookie"));
+    let response = request(
+        &router,
+        "POST",
+        "/api/session/reset",
+        "quiltfall_session=unknown",
+        input,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    assert_eq!(body(response).await, json!({"cleared":true}));
+    assert_eq!(snapshot(&router, &id, &cookie).await, original);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM players")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    let unconfirmed = request(
+        &router,
+        "POST",
+        "/api/session/reset",
+        "quiltfall_session=unknown",
+        json!({"reset_invalid_session":false}),
+    )
+    .await;
+    assert_eq!(unconfirmed.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(!unconfirmed.headers().contains_key("set-cookie"));
+}
+
+#[tokio::test]
 async fn previews_are_public_configured_and_have_no_database_side_effects() {
     let (state, router) = app().await;
     for (path, title) in [

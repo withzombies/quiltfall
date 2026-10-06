@@ -195,3 +195,40 @@ test("a closed event stream retries snapshots through 503 failures and ignores s
     page.getByRole("button", { name: "Start a game" }),
   ).toBeVisible();
 });
+
+test("an unrecognized cookie cannot trap Your games; clearing it is explicit", async ({
+  page,
+}) => {
+  const invite = await createInvite(page);
+  const originalGame = page.url();
+  await page.context().clearCookies();
+  await page.context().addCookies([
+    {
+      name: "quiltfall_session",
+      value: "unrecognized",
+      domain: new URL(invite).hostname,
+      path: "/",
+      httpOnly: true,
+      secure: false,
+    },
+  ]);
+  await page.goto(originalGame);
+  await expect(page.getByLabel("Your name")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Clear old session" }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Your games" }).click();
+  await expect(page).toHaveURL(new URL("/", invite).href);
+  await expect(
+    page.getByRole("button", { name: "Clear old session" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Your name")).toHaveCount(0);
+  await page.getByRole("button", { name: "Clear old session" }).click();
+  await expect(
+    page.getByRole("button", { name: "Start a game" }),
+  ).toBeVisible();
+  await page.getByLabel("Your name").fill("New session");
+  await page.getByRole("button", { name: "Start a game" }).click();
+  await expect(page.locator("#connection")).toContainText("Connected");
+  expect(page.url()).not.toBe(originalGame);
+});

@@ -194,13 +194,34 @@ function renderError(error) {
     "session_invalid",
     "not_a_member",
   ].includes(error.code);
-  const explanation = session
-    ? "This browser cannot resume your seat. Use the original browser with its game cookie. Try again if that cookie is available; entering a name cannot restore a seat."
-    : error.status
-      ? error.message
-      : "Could not reach your game. Try again when your connection returns.";
-  root.innerHTML = `<section class="join-page card"><h1>${session ? "Your game session is unavailable" : "Lost the thread?"}</h1><p class="small">${escape(explanation)}</p><button class="button" id="retry">Try again</button> <a class="button secondary" href="/">Your games</a></section>`;
+  const oldSession = !gameId && error.code === "session_invalid";
+  const explanation = oldSession
+    ? "This browser has an old session the server no longer recognizes. Try again to check it, or clear that old session to start a new game. Clearing it cannot recover earlier games."
+    : session
+      ? "This browser cannot resume your seat. Use the original browser with its game cookie. Try again if that cookie is available; entering a name cannot restore a seat."
+      : error.status
+        ? error.message
+        : "Could not reach your game. Try again when your connection returns.";
+  root.innerHTML = `<section class="join-page card"><h1>${session ? "Your game session is unavailable" : "Lost the thread?"}</h1><p class="small">${escape(explanation)}</p><button class="button" id="retry">Try again</button> ${oldSession ? '<button class="button secondary" id="clear-session">Clear old session</button>' : '<a class="button secondary" href="/">Your games</a>'}</section>`;
   document.querySelector("#retry").addEventListener("click", () => route());
+  document
+    .querySelector("#clear-session")
+    ?.addEventListener("click", async (event) => {
+      const epoch = routeEpoch;
+      event.target.disabled = true;
+      try {
+        await api("/api/session/reset", { reset_invalid_session: true });
+        if (epoch !== routeEpoch) return;
+        verification = null;
+        await route();
+      } catch (resetError) {
+        if (epoch !== routeEpoch) return;
+        message(
+          resetError.message || "Could not clear the old session. Try again.",
+        );
+        event.target.disabled = false;
+      }
+    });
 }
 
 function playerCard(owner) {

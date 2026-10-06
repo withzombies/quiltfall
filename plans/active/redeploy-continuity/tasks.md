@@ -13,3 +13,8 @@
 
 ## Done
 - [x] Approved scope and architecture; primary-source research; Colima baseline.
+
+## Screenshot follow-up
+- [x] Reproduce the Your games loop with an invalid cookie (API/browser RED).
+- [x] Add explicit invalid-session clearing; protect valid sessions and all saves.
+- [ ] Verify all gates, deploy the exact updated image, test reset over HTTPS.

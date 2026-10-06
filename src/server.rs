@@ -298,6 +298,7 @@ pub fn router(app: App) -> Router {
             get(|| async { asset("image/svg+xml", include_str!("../web/hero.svg")) }),
         )
         .route("/api/me", get(me))
+        .route("/api/session/reset", post(reset_invalid_session))
         .route("/api/games", post(create))
         .route("/api/games/{id}", get(read))
         .route("/api/games/{id}/invite", get(invite_status))
@@ -937,4 +938,45 @@ async fn admission(
         "request completed"
     );
     response
+}
+
+#[derive(Deserialize)]
+struct SessionResetInput {
+    reset_invalid_session: bool,
+}
+
+async fn reset_invalid_session(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(input): Json<SessionResetInput>,
+) -> Result<Response, ApiError> {
+    if !input.reset_invalid_session {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Confirm clearing the unrecognized session.",
+        ));
+    }
+    let mut conn = app.pool.acquire().await?;
+    match identity(&mut conn, &headers).await {
+        Ok(_) => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "Your session is still valid. Keep using your saved games.",
+            ));
+        }
+        Err(error) if matches!(error.code, Some("session_missing" | "session_invalid")) => {}
+        Err(error) => return Err(error),
+    }
+    let cookie = format!(
+        "quiltfall_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if app.secure_cookie { "; Secure" } else { "" }
+    );
+    Ok((
+        [
+            (header::SET_COOKIE, cookie),
+            (header::CACHE_CONTROL, "no-store".into()),
+        ],
+        Json(json!({"cleared":true})),
+    )
+        .into_response())
 }

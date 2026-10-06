@@ -95,7 +95,9 @@ unfinished games do not count toward results.
 
 Your browser cookie remembers you. Clearing cookies, using a private window,
 switching browsers, or changing the server hostname creates a separate identity;
-a name alone cannot recover your games. Share invites privately: the first
+a name alone cannot recover your games. If the server no longer recognizes an
+old cookie, **Your games** offers **Clear old session** so you can explicitly
+start fresh; this cannot recover earlier games. Share invites privately: the first
 person to explicitly join takes the second seat. If copying a link is blocked,
 the app selects it for you to copy manually.
 

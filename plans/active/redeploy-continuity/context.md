@@ -76,3 +76,29 @@ sha256:cc6fecf43078ab526893ea537574a133a4c050eab4ddec3d625cc3bebf36979b.
 Compressed content 11,540,746 bytes; unpacked filesystem 26,852 KiB. Full
 container gates pass under 256 MiB. The registry push preserved that digest.
 Fly configuration validates. No production machine has yet been replaced.
+
+Initial cutover completed: consistent /tmp backup integrity-checked, all schema
+and table rows compared after LiteFS import, marker created only after equality.
+Bootstrap removed by a normal rolling deploy. Two live desktop WebKit HTTPS
+contexts retained identities, board, turn and revision, resumed without any
+navigation, then accepted another move. Same encrypted volume remains attached.
+Public OG tags and immutable PNG verified over HTTPS.
+
+Screenshot follow-up exposed a separate recovery dead end: with an unrecognized
+cookie, /api/me returns session_invalid and Your games renders the same error.
+Reproduced in desktop WebKit; regression fails because Clear old session is
+absent. Add an explicit home-page reset for unrecognized cookies only. Valid
+sessions are protected; no stored identities/games are deleted and resume URLs
+still never offer a new seat. Reset is a JSON POST requiring explicit intent.
+Research examples read before this fix: axum-extra CookieJar::remove docs,
+Express response.clearCookie implementation, Django session logout example:
+https://docs.rs/axum-extra/latest/axum_extra/extract/cookie/struct.CookieJar.html
+https://raw.githubusercontent.com/expressjs/express/master/lib/response.js
+https://docs.djangoproject.com/en/5.2/topics/http/sessions/#examples
+
+User confirmed the screenshot was on Home / Your games. Explicit reset now
+passes its API and browser regressions: it clears only an unrecognized cookie,
+refuses valid sessions, preserves every saved row and allows a fresh verified
+identity. All 71 browser cases, 41 Rust cases, six Node cases, lint/format and
+the full container gate pass. New AMD64 tested/pushed digest:
+sha256:fae5f66ca5d93c72f74918f17eb5074279a6921eb8f294eb9627a17ebf630a88.
