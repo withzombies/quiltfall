@@ -234,3 +234,7 @@ events carry complete snapshots and animation effects. No game rules run in the
 browser. CSS library versions are locked and vendored with their licenses.
 After updating those packages, run `npm run vendor:css` to refresh the copies.
 
+## License
+
+Quiltfall is licensed under the [Apache License 2.0](LICENSE).
+Vendored CSS libraries retain their MIT licenses in `web/vendor/`.
