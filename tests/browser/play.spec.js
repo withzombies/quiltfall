@@ -126,7 +126,7 @@ test("two phones play, reconnect, resign and see saved results", async ({
   await guest.getByRole("button", { name: "Resign this game" }).click();
   await guest.getByRole("button", { name: "Resign", exact: true }).click();
   await expect(
-    host.getByRole("heading", { name: "You win! Nicely played." }),
+    host.getByRole("heading", { name: "You won the quilt!" }),
   ).toBeVisible();
   await expect(host.locator(".result-card")).toHaveClass(/animate__bounceIn/);
   await host.getByRole("link", { name: "Your games" }).click();
@@ -811,6 +811,237 @@ test("full quilts keep triple choices alongside direct piece taps", async ({
     ),
   ).toHaveLength(3);
   expect(after.game.state.turn).toBe(1);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+async function resignGuest(pair) {
+  await pair.guest.getByRole("button", { name: "Resign this game" }).click();
+  await pair.guest.getByRole("button", { name: "Resign", exact: true }).click();
+  await expect(
+    pair.host.getByRole("heading", { name: "You won the quilt!", exact: true }),
+  ).toBeVisible();
+  await expect(
+    pair.guest.getByRole("heading", {
+      name: "Roo wins the quilt!",
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+
+test("both phones celebrate the winner with dancing cats and can inspect the final quilt", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  await resignGuest(pair);
+  for (const page of [pair.host, pair.guest]) {
+    await expect(page.locator(".cat-party")).toHaveAttribute(
+      "data-winner",
+      "0",
+    );
+    await expect(page.locator(".cat-party .cat.owner-0")).toHaveCount(3);
+    await expect(page.locator(".cat-party .cat.owner-1")).toHaveCount(0);
+    await expect(page.locator(".champion .cat")).toHaveAttribute(
+      "src",
+      "/adult.svg",
+    );
+    await expect(page.locator(".kitten-dancer .cat")).toHaveCount(2);
+    await expect(page.locator(".result-reason")).toHaveText(
+      "Won by resignation",
+    );
+    await expect(page.locator(".board")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.savedParty = document.querySelector(".cat-party");
+      const actor = document.querySelector(".champion");
+      window.dance = actor.getAnimations()[0];
+      window.dance.pause();
+      window.dance.currentTime = 300;
+    });
+    const motion = await page
+      .locator(".champion")
+      .evaluate((node) => getComputedStyle(node).transform);
+    expect(motion).not.toBe("none");
+    expect(motion).not.toBe("matrix(1, 0, 0, 1, 0, 0)");
+    const timing = await page.evaluate(() =>
+      window.dance.effect.getComputedTiming(),
+    );
+    expect(timing.activeDuration).toBe(4800);
+    await page.evaluate(() => window.dance.finish());
+    expect(
+      await page
+        .locator(".champion")
+        .evaluate((node) => getComputedStyle(node).transform),
+    ).toMatch(/^(none|matrix\(1, 0, 0, 1, 0, 0\))$/);
+    await expect(page.locator(".result-card")).toHaveCSS("opacity", "1");
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await page.screenshot({
+      path: `test-results/${testInfo.project.name}-${page === pair.host ? "winner" : "loser"}.png`,
+    });
+  }
+  // Reconnect carries the same revision; it must preserve the finished dance.
+  await pair.hostContext.setOffline(true);
+  await pair.hostContext.setOffline(false);
+  // Await a real SSE snapshot after the online handler reconnects. Observing
+  // the native stream avoids asserting identity before the reply arrives.
+  await pair.host.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const NativeEventSource = window.EventSource;
+        window.EventSource = class extends NativeEventSource {
+          constructor(url) {
+            super(url);
+            this.addEventListener(
+              "snapshot",
+              () => {
+                window.EventSource = NativeEventSource;
+                setTimeout(resolve, 0);
+              },
+              { once: true },
+            );
+          }
+        };
+        window.dispatchEvent(new Event("online"));
+      }),
+  );
+  await expect
+    .poll(() =>
+      pair.host.evaluate(
+        () => window.savedParty === document.querySelector(".cat-party"),
+      ),
+    )
+    .toBe(true);
+  await pair.host
+    .getByRole("button", { name: "View final quilt", exact: true })
+    .click();
+  await expect(pair.host.locator(".square")).toHaveCount(36);
+  await expect(pair.host.locator(".square:enabled")).toHaveCount(0);
+  await pair.host
+    .getByRole("button", { name: "Back to celebration", exact: false })
+    .click();
+  await expect(pair.host.locator(".champion")).toBeVisible();
+  expect(
+    await pair.host.evaluate(
+      () => window.savedParty === document.querySelector(".cat-party"),
+    ),
+  ).toBe(false);
+  await pair.host.reload();
+  await expect(
+    pair.host.getByRole("heading", { name: "You won the quilt!", exact: true }),
+  ).toBeVisible();
+  await pair.host
+    .getByRole("link", { name: "Your games", exact: true })
+    .click();
+  await pair.host.getByRole("tab", { name: "Past games" }).click();
+  await pair.host.locator(`a[href="/game/${pair.id}"]`).click();
+  await expect(
+    pair.host.getByRole("heading", { name: "You won the quilt!", exact: true }),
+  ).toBeVisible();
+  await pair.host
+    .getByRole("link", { name: "Start another game", exact: false })
+    .click();
+  await expect(
+    pair.host.getByRole("button", { name: "Start a game", exact: true }),
+  ).toBeVisible();
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+for (const win of ["three_cats", "eight_cats"]) {
+  test(`${win} waits for the last landing before showing a crowned winner`, async ({
+    browser,
+  }) => {
+    const pair = await createPair(browser);
+    await seedBoard(pair, (state) => {
+      state.turn = 1;
+      for (const p of state.pieces.filter((p) => p.owner === 1)) p.kind = "cat";
+      if (win === "three_cats") {
+        state.pieces[8].pos = { x: 0, y: 0 };
+        state.pieces[9].pos = { x: 1, y: 0 };
+        state.pieces[10].pos = { x: 2, y: 0 };
+      } else
+        sevenPositions.forEach(([x, y], i) => {
+          state.pieces[8 + i].pos = { x, y };
+        });
+    });
+    for (const page of [pair.host, pair.guest]) await inspectMotion(page);
+    await pair.guest
+      .getByRole("button", { name: /Cat .* in your pool/ })
+      .click();
+    await pair.guest
+      .getByRole("button", { name: "F6: Empty", exact: true })
+      .click();
+    for (const page of [pair.host, pair.guest]) {
+      await expect
+        .poll(() => page.evaluate(() => window.motionLog.length))
+        .toBe(1);
+      await expect(page.locator(".cat-party")).toHaveCount(0);
+      await expect(page.locator(".board")).toBeVisible();
+      await finishMotion(page, 0);
+      await expect(page.locator(".cat-party")).toHaveAttribute(
+        "data-winner",
+        "1",
+      );
+      await expect(page.locator(".cat-party .cat.owner-1")).toHaveCount(3);
+      await expect(page.locator(".result-reason")).toHaveText(
+        win === "three_cats"
+          ? "Three cats in a row"
+          : "Eight cats on the quilt",
+      );
+    }
+    await expect(
+      pair.guest.getByRole("heading", {
+        name: "You won the quilt!",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      pair.host.getByRole("heading", {
+        name: "Bean wins the quilt!",
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(pair.errors).toEqual([]);
+    await pair.hostContext.close();
+    await pair.guestContext.close();
+  });
+}
+
+test("reduced-motion finales are static and long names fit at 320px", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest]) {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.setViewportSize({ width: 320, height: 780 });
+  }
+  // Exercise an actual user name through creation in the existing long-name test;
+  // this fixture additionally checks rendering/escaping in the loss heading.
+  execFileSync("python3", [
+    "-c",
+    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE players SET name=? WHERE id=(SELECT host_id FROM games WHERE id=?)",(sys.argv[2],sys.argv[1])); c.commit()',
+    pair.id,
+    "W".repeat(32),
+  ]);
+  await pair.host.reload();
+  await pair.guest.reload();
+  await pair.guest.getByRole("button", { name: "Resign this game" }).click();
+  await pair.guest.getByRole("button", { name: "Resign", exact: true }).click();
+  for (const page of [pair.host, pair.guest]) {
+    await expect(page.locator(".cat-party")).toBeVisible();
+    expect(
+      await page
+        .locator(".cat-party")
+        .evaluate((node) => node.getAnimations({ subtree: true }).length),
+    ).toBe(0);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(320);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await expect(
+      page.getByRole("button", { name: "View final quilt", exact: true }),
+    ).toBeVisible();
+  }
   await pair.hostContext.close();
   await pair.guestContext.close();
 });

@@ -943,3 +943,193 @@ dialog h2 {
 .result-card {
   --animate-duration: 0.7s;
 }
+
+.result-screen {
+  max-width: 560px;
+  margin: 24px auto 60px;
+  padding: clamp(22px, 5vw, 40px);
+  background: #fcfaf1;
+  border: 1px solid #d5d7bf;
+  outline: 1px dashed #d5d7bf;
+  outline-offset: -9px;
+  border-radius: 26px;
+  box-shadow: var(--shadow-2);
+  overflow-wrap: anywhere;
+}
+.result-screen h1 {
+  color: var(--green);
+  font: 400 clamp(30px, 7vw, 42px) / 1.12 var(--serif);
+  margin: 15px 0 12px;
+}
+.result-screen .result-copy {
+  font-size: 14px;
+  line-height: 1.6;
+}
+.cat-party {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 3%;
+  padding: 58px 14px 26px;
+  margin: 20px 0 24px;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 50% 50% 18px 18px;
+  background: radial-gradient(ellipse at 50% 45%, #f0e4bf8c, transparent 65%);
+}
+.cat-party::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 47px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(#d7dfc8 0% 25%, #e9e9d4 0% 50%) 50% /
+    40px 40px;
+  border-bottom: 5px solid #b69877;
+  transform: perspective(180px) rotateX(24deg);
+}
+.dancer {
+  position: relative;
+  flex: 0 0 26%;
+  transform-origin: 50% 90%;
+}
+.dancer .cat {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.champion {
+  flex-basis: 42%;
+  animation: champion-dance 1.2s ease-in-out 4;
+}
+.kitten-dancer {
+  animation: kitten-dance 1.2s ease-in-out 4;
+}
+.kitten-dancer:last-child {
+  animation-direction: reverse;
+}
+.crown {
+  position: absolute;
+  width: 45%;
+  left: 27.5%;
+  top: -23%;
+  animation: crown-arrive 0.5s var(--ease-out-3) both;
+}
+.party-confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.party-confetti i {
+  position: absolute;
+  left: var(--x);
+  top: 0;
+  width: 7px;
+  height: 11px;
+  background: #b78942;
+  border-radius: 2px;
+  opacity: 0;
+  animation: party-fall 1.7s var(--delay) ease-out both;
+}
+.party-confetti i:nth-child(3n) {
+  background: var(--sage);
+  border-radius: 50%;
+}
+.party-confetti i:nth-child(3n + 1) {
+  background: var(--peach);
+}
+.winner-chip {
+  display: inline-block;
+  padding: 9px 15px;
+  background: #f2e6c6;
+  color: #64502c;
+  border-radius: 20px;
+  font-weight: 600;
+}
+.winner-chip span {
+  font-weight: 400;
+}
+.result-screen .result-details {
+  margin: 14px 0 25px;
+  line-height: 1.6;
+}
+.result-links {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+@keyframes champion-dance {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  20% {
+    transform: translateY(-10px) rotate(-7deg);
+  }
+  40% {
+    transform: translateY(0) rotate(5deg);
+  }
+  65% {
+    transform: translateY(-12px) rotate(7deg);
+  }
+  85% {
+    transform: translateY(0) rotate(-4deg);
+  }
+}
+@keyframes kitten-dance {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  25% {
+    transform: translateY(-18px) rotate(10deg);
+  }
+  50% {
+    transform: translateY(0) rotate(-8deg) scaleY(0.95);
+  }
+  75% {
+    transform: translateY(-8px) rotate(-10deg);
+  }
+}
+@keyframes crown-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-25px) rotate(-15deg);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(0);
+  }
+}
+@keyframes party-fall {
+  0% {
+    opacity: 0;
+    transform: translateY(-15px) rotate(0);
+  }
+  15% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(220px) rotate(300deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .result-screen,
+  .result-screen * {
+    animation: none !important;
+  }
+  .party-confetti {
+    display: none;
+  }
+}

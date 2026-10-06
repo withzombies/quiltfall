@@ -23,6 +23,7 @@ let selectedOption = 0;
 let updates = Promise.resolve();
 let noticeTimer;
 let historyTab = "active";
+let showFinalQuilt = false;
 
 function escape(value) {
   return String(value ?? "").replace(
@@ -190,6 +191,45 @@ function position(node, pos) {
   node.style.top = `${(pos.y * 100) / 6}%`;
 }
 
+function renderResult() {
+  const { state, players, id, revision } = current.game;
+  const key = `${id}:${revision}`;
+  // HTTP and SSE can deliver the same finish. Keep its dance mounted once.
+  if (root.querySelector(".result-card")?.dataset.resultKey === key) return;
+  const winner = state.phase.winner;
+  const name = players[winner].name;
+  const won = winner === current.you;
+  const reason = {
+    three_cats: "Three cats in a row",
+    eight_cats: "Eight cats on the quilt",
+    resignation: "Won by resignation",
+  }[state.phase.reason];
+  const confetti = Array.from(
+    { length: 18 },
+    (_, i) =>
+      `<i style="--i:${i};--x:${8 + ((i * 29) % 84)}%;--delay:${(i % 4) * 0.06}s"></i>`,
+  ).join("");
+  root.innerHTML = `<section class="result-card result-screen animate__animated ${won ? "animate__bounceIn" : "animate__fadeIn"}" data-result-key="${escape(key)}">
+    <span class="eyebrow">A QUILT WELL PLAYED</span>
+    <h1 aria-live="polite">${won ? "You won the quilt!" : `${escape(name)} wins the quilt!`}</h1>
+    <p class="result-copy">${won ? "A little victory. A lot of purrs." : "A lovely rivalry. There’s always another quilt."}</p>
+    <div class="cat-party" data-winner="${winner}" aria-hidden="true">
+      <div class="party-confetti">${confetti}</div>
+      <div class="dancer kitten-dancer">${cat("kitten", winner)}</div>
+      <div class="dancer champion"><svg class="crown" viewBox="0 0 64 44"><path d="M8 35 4 9l17 12L32 4l11 17L60 9l-4 26Z" fill="#e6bb61" stroke="#956b32" stroke-width="3" stroke-linejoin="round"/><path d="M10 40h44" stroke="#956b32" stroke-width="4" stroke-linecap="round"/></svg>${cat("cat", winner)}</div>
+      <div class="dancer kitten-dancer">${cat("kitten", winner)}</div>
+    </div>
+    <div class="winner-chip">${escape(name)} <span>· quilt champion</span></div>
+    <p class="result-details"><span class="result-reason">${reason}</span> · ${state.move_count} moves</p>
+    <a class="button wide" href="/">Start another game →</a>
+    <div class="result-links"><button class="text-button" id="view-quilt">View final quilt</button><a href="/">Your games</a></div>
+  </section>`;
+  document.querySelector("#view-quilt").addEventListener("click", () => {
+    showFinalQuilt = true;
+    renderGame();
+  });
+}
+
 function renderGame() {
   if (!current) return;
   if (animating) {
@@ -205,6 +245,10 @@ function renderGame() {
   root.setAttribute("aria-busy", String(busy || animating));
   const { state, players } = current.game;
   const finished = state.phase.type === "finished";
+  if (finished && !showFinalQuilt) {
+    renderResult();
+    return;
+  }
   const waiting = players.length < 2;
   const counts = poolCounts(current, current.you);
   if (counts[selectedKind] === 0)
@@ -254,9 +298,9 @@ function renderGame() {
         ? graduationHint
         : `Tap an empty square to place a ${selectedKind}. Moves are final.`;
   root.innerHTML = `<section class="game-page">
-    <div class="game-nav"><a href="/">← Your games</a><span class="connection ${connected ? "" : "offline"}" id="connection">${connected ? "Connected · game saved" : "Reconnecting…"}</span></div>
+    <div class="game-nav">${finished ? '<button class="text-button" id="celebration-back">← Back to celebration</button>' : '<a href="/">← Your games</a>'}<span class="connection ${connected ? "" : "offline"}" id="connection">${connected ? "Connected · game saved" : "Reconnecting…"}</span></div>
     <div class="players">${playerCard(0)}<span class="versus">&amp;</span>${playerCard(1)}</div>
-    <div class="game-status" aria-live="polite"><h1>${escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
+    <div class="game-status" aria-live="polite"><h1>${finished ? "The final quilt" : escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
     <div class="motion-viewport"><div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div></div>
     <div class="board-footnote"><span>A LITTLE NUDGE GOES A LONG WAY</span><span>MOVE ${state.move_count}</span></div>
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
@@ -278,9 +322,12 @@ function renderGame() {
             )}</div><button class="button wide" id="graduate" ${eligible ? "" : "disabled"}>Confirm selection →</button></div>`
         : ""
     }
-    ${finished ? `<div class="result-card animate__animated ${state.phase.winner === current.you ? "animate__bounceIn" : "animate__fadeIn"}"><p>${state.phase.reason === "resignation" ? "A gracious exit. There’s always another quilt." : "The quilt has a champion. Fancy another round?"}</p><a class="button" href="/">Start another game →</a></div>` : ""}
     ${!waiting && !finished ? '<div class="game-controls"><button class="text-button" id="resign">Resign this game</button><span class="text-button">Saved after every move</span></div>' : ""}
   </section>`;
+  document.querySelector("#celebration-back")?.addEventListener("click", () => {
+    showFinalQuilt = false;
+    renderGame();
+  });
   const layer = document.querySelector(".pieces-layer");
   for (const piece of state.pieces.filter((p) => p.pos)) {
     const node = existing.get(piece.id) ?? pieceNode(piece);
@@ -623,6 +670,7 @@ async function route() {
   current = null;
   busy = false;
   animating = false;
+  showFinalQuilt = false;
   selectedOption = 0;
   selectedKind = "kitten";
   const match = location.pathname.match(/^\/game\/([a-zA-Z0-9-]+)$/);
