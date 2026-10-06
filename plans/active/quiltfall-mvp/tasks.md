@@ -1,9 +1,7 @@
 # Tasks
 ## Now
-- [ ] Rules engine with regression/specification tests.
-## Next
-- [ ] SQLite saves, anonymous profiles, HTTP actions and SSE, integration tests.
 - [ ] Cozy phone UI and browser verification.
+## Next
 - [ ] Local instructions, optional Fly container/config, final verification.
 ## Later
 Deferred accounts, bots, replay, chat, notifications.
@@ -11,3 +9,5 @@ Deferred accounts, bots, replay, chat, notifications.
 None.
 ## Done
 - [x] Inspect empty workspace, study three examples, lock intent and rules.
+- [x] Rules engine: 15 specification tests, build, fmt, Clippy passed.
+- [x] SQLite saves, anonymous sessions, HTTP/SSE: 10 integration tests and gates pass.
