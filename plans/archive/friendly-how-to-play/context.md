@@ -63,3 +63,23 @@ Implementation review: all acceptance checks are covered by the six guide tests
 in both engines, with actual desktop contexts and native intermediate frames,
 plus reviewed screenshots. Existing state/game/connection code, backend APIs and
 dependencies are unchanged. Obsolete list styling is removed; no unfinished work.
+
+Deployed October 7, 2026 to https://quiltfall.fly.dev using the locally built and
+container-tested image (no remote rebuild):
+- Registry tag: how-to-play-20261007-60591b9.
+- Immutable index: sha256:8dfb2982fe8bff450d35866778bef05a59b64745d022d6700444413ddd387b90.
+- Fly AMD64 manifest: sha256:9f0c8f52d89f95aeeb349edb2a4f2fcf3aacc4e4f6552dcd7f9f17494c1b32d7.
+- Retained machine 80ee651b66d6d8 and volume vol_vwnkz260ye69kx8v; no bootstrap.
+- Previous production manifest retained as quiltfall:local-previous:
+  sha256:1d263ab17e3ff5c1c5d4d8daea7cef135abee0c7d1bd97ff960cc3b097f43c38.
+- Private backup: backups/predeploy-2026-10-07T16-47-30-961Z.db; integrity_check ok.
+
+Container gates passed against the actual previous production frontend: waiting,
+moves, graduation, rematches/results, graceful replacement/crash, identities,
+open-tab resume, no uncertain-action replay and image size budgets at 256 MiB.
+The HTTPS deployment smoke passed: two desktop WebKit tabs resumed without
+navigation, retained identity/state/revision, and continued play. The smoke game
+was finished. Fly health checks pass. Live app.js/style.css match local bytes,
+and the homepage contains all five cards. All 10 home-only guide browser tests
+passed against production in mobile Chromium/WebKit, including animation frames,
+Replay, keyboard closing, accessibility and reduced motion.

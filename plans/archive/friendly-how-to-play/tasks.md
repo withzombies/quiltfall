@@ -9,6 +9,8 @@
 ## Blocked
 
 ## Done
+- [x] Deploy the tested immutable image, verify the private backup and open-tab
+  continuity, and pass all 10 home-only guide browser checks on live HTTPS.
 - [x] Commit the verified feature (60591b9) and archive task docs.
 - [x] Review responsive visuals/acceptance and pass all quality gates: 83 browser
   tests, 41 Rust tests, 6 Node tests, build/fmt/Clippy/lint/format and diff checks.
