@@ -1,8 +1,6 @@
 # Tasks
 
 ## Now
-- [ ] Fix cramped graphic/text spacing on all rule cards, review responsive
-  screenshots and animations, pass release checks and deploy the adjustment.
 
 ## Next
 
@@ -11,6 +9,9 @@
 ## Blocked
 
 ## Done
+- [x] Fix cramped graphic/text spacing on all rule cards, review responsive
+  screenshots and animations, pass all 83 browser/release checks and deploy;
+  live assets, 10 guide checks and open-game continuity verified.
 - [x] Deploy the tested immutable image, verify the private backup and open-tab
   continuity, and pass all 10 home-only guide browser checks on live HTTPS.
 - [x] Commit the verified feature (60591b9) and archive task docs.

@@ -102,5 +102,23 @@ Spacing verification: all 83 browser checks pass in one full run (3.5m), with
 reviewed 320px/960px and completed graduation screenshots. All 41 Rust tests,
 6 Node tests, build/fmt/Clippy/lint/format and diff checks pass. The AMD64 release
 image built successfully and all container continuity/size gates passed against
-the current production image. Ready to deploy the tested immutable image:
+the current production image. Tested immutable image:
 sha256:7f799230ee04bc495c562618a75b75afd503b0099412636c9822ddbc10d3f792.
+
+Spacing release submitted with npm run deploy after commit 0fc326b. Private
+backup backups/predeploy-2026-10-07T16-59-26-008Z.db passed integrity_check.
+Fly accepted the machine configuration update at 16:59:37 UTC for tested AMD64
+manifest sha256:75acc37eb8e449e961080350e6741b6326a29d1ddc0372338fca833886106e36,
+retaining the existing machine and volume. The session switched to restricted
+filesystem/network permissions during deployment; the running command session
+became unavailable. When command access resumed, Fly status confirmed that this
+image was running with passing health checks.
+
+Final spacing release verification, October 7, 2026: completed the authorized
+release script with the same tested immutable image at 17:04 UTC. Fresh private
+backup backups/predeploy-2026-10-07T17-04-21-672Z.db passed integrity_check. The
+HTTPS continuity smoke passed: two desktop WebKit tabs resumed automatically,
+retained identity/state/revision, did not navigate, and continued play. The
+verification game was finished. All 10 home-only guide browser checks passed
+against production in Chromium/WebKit (9.6s). Served app.js and style.css match
+the tested local spacing fix exactly, and live HTTPS/Fly health checks pass.
