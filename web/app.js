@@ -973,8 +973,8 @@ function setupRules() {
       if (kind === "kitten")
         frames.push(
           pose(0.62, x, 1.85, { scale: 1.1 }),
-          pose(0.85, x + 0.5, 6.6),
-          pose(1, x + 0.5, 6.6),
+          pose(0.85, x + 0.5, 7.2),
+          pose(1, x + 0.5, 7.2),
         );
       else
         frames.push(
@@ -1006,8 +1006,8 @@ function setupRules() {
           pose(0.2, 0, 1),
           pose(0.4, -1, 1, { rotation: -20 }),
           pose(0.5, -1, 1.5, { rotation: -30, opacity: 0.3 }),
-          pose(0.78, 1.5, 6.6),
-          pose(1, 1.5, 6.6),
+          pose(0.78, 1.5, 7.2),
+          pose(1, 1.5, 7.2),
         ]),
       ],
       paths: [

@@ -1,6 +1,8 @@
 # Tasks
 
 ## Now
+- [ ] Fix cramped graphic/text spacing on all rule cards, review responsive
+  screenshots and animations, pass release checks and deploy the adjustment.
 
 ## Next
 

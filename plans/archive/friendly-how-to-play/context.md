@@ -83,3 +83,24 @@ was finished. Fly health checks pass. Live app.js/style.css match local bytes,
 and the homepage contains all five cards. All 10 home-only guide browser tests
 passed against production in mobile Chromium/WebKit, including animation frames,
 Replay, keyboard closing, accessibility and reduced motion.
+
+Spacing follow-up, October 7, 2026: user screenshot shows the pool label against
+the quilt shadow, with captions crowded on all cards. Root cause: the shadow
+extends 9px outside the stage, while the absolute pool label starts only 8px
+below it; stage margins also leave little clearance around the pool pieces.
+Increase shared stage/caption spacing and move the pool label and pool landing
+positions down together, leaving arrow tips above the label. Keep the five existing
+storyboards and use existing guide/layout browser checks and screenshots for
+this reversible visual adjustment.
+
+Reviewed CSS layout examples/references before editing:
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/margin-bottom
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/outline
+- https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/box-shadow
+
+Spacing verification: all 83 browser checks pass in one full run (3.5m), with
+reviewed 320px/960px and completed graduation screenshots. All 41 Rust tests,
+6 Node tests, build/fmt/Clippy/lint/format and diff checks pass. The AMD64 release
+image built successfully and all container continuity/size gates passed against
+the current production image. Ready to deploy the tested immutable image:
+sha256:7f799230ee04bc495c562618a75b75afd503b0099412636c9822ddbc10d3f792.
