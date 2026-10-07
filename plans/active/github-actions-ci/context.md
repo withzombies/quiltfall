@@ -46,3 +46,7 @@ Quiltfall-scoped one-year token as repository secret FLY_API_TOKEN on October 7,
 
 Resume: local implementation is verified and credentials are configured. Push
 main and monitor the first Linux workflow through deployment and digest checks.
+
+Pull-request verification: use a temporary draft PR with this documentation-only
+change to exercise the same Linux build/test gate. Confirm deployment is skipped;
+close the PR and remove its branch after verification.
