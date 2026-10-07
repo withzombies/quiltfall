@@ -46,3 +46,22 @@ Quiltfall-scoped one-year token as repository secret FLY_API_TOKEN on October 7,
 
 Resume: local implementation is verified and credentials are configured. Push
 main and monitor the first Linux workflow through deployment and digest checks.
+
+First Linux main run 37672031908 passed all 134 tests, Rust/JS lint/format, image
+budgets, artifact identity and actual-production-frontend compatibility. It
+stopped before deployment because `RepoDigests[0]` was the local quiltfall alias.
+Reproduced RED locally by tagging the pushed CI image as quiltfall:publish-regression:
+the first digest is quiltfall@..., followed by the correct registry.fly.io digest.
+Read the remote manifest with buildx imagetools inspect and pull its immutable
+digest back to verify the tested identity; no positional alias selection.
+
+Research for this correction:
+- [Moby digest aliases](https://github.com/moby/moby/issues/48747)
+- [Registry manifest inspection](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/)
+- [Immutable digest pulls](https://docs.docker.com/reference/cli/docker/image/pull/)
+
+The draft verification PR #1 run 37672405907 passed with deploy skipped. Node 20
+deprecation warnings identified in cache/upload/download actions; updated to
+verified Node 24 commit pins for cache v5 and upload/download-artifact v7.
+GREEN: registry manifest inspection and immutable pull correctly verified the
+aliased published CI image against e921a9e28a9652a2099fcbbd7a7f96545fdbf68d11a09d90fc41d74ddfa295a4.

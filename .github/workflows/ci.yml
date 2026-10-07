@@ -42,7 +42,7 @@ jobs:
         run: |
           rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
           rustup default 1.95.0
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cargo/registry
@@ -90,7 +90,7 @@ jobs:
         run: docker --context ci image save "$CONTAINER_IMAGE" | gzip > release-image.tar.gz
       - name: Upload the tested image
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-image
           path: release-image.tar.gz
@@ -99,7 +99,7 @@ jobs:
           if-no-files-found: error
       - name: Upload browser failure diagnostics
         if: failure()
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: browser-failures
           path: |
@@ -139,7 +139,7 @@ jobs:
         run: |
           sudo modprobe fuse
           test -c /dev/fuse
-      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: release-image
       - name: Load and verify the tested image
@@ -171,8 +171,12 @@ jobs:
           tag="registry.fly.io/quiltfall:sha-$GITHUB_SHA"
           docker --context ci image tag "$CONTAINER_IMAGE" "$tag"
           docker --context ci image push "$tag"
-          release=$(docker --context ci image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          # Local aliases also appear in RepoDigests. Read the pushed registry
+          # manifest directly, then pull it back and compare the tested identity.
+          digest=$(docker --context ci buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')
+          release="registry.fly.io/quiltfall@$digest"
           [[ "$release" =~ ^registry\.fly\.io/quiltfall@sha256:[a-f0-9]{64}$ ]]
+          docker --context ci image pull --platform linux/amd64 "$release"
           test "$(docker --context ci image inspect --format '{{.Id}}' "$release")" = "$TESTED_IMAGE_ID"
           echo "RELEASE_IMAGE=$release" >> "$GITHUB_ENV"
       - name: Deploy and verify live game continuity, health, and assets
