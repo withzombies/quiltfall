@@ -40,6 +40,9 @@ Automatic approval review rejected token creation/storage because it requires
 explicit authorization to send this credential to the GitHub repository.
 Requested that exact approval asynchronously. No token was created or disclosed.
 
-Resume: local implementation is verified. Await credential authorization, then
-configure the secret, push main and monitor the first Linux workflow through
-actual deployment and digest checks.
+The user explicitly approved token creation and transfer. Configured the
+Quiltfall-scoped one-year token as repository secret FLY_API_TOKEN on October 7,
+2026; verified its name through gh secret list without reading the secret value.
+
+Resume: local implementation is verified and credentials are configured. Push
+main and monitor the first Linux workflow through deployment and digest checks.
