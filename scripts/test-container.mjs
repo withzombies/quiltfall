@@ -7,13 +7,14 @@ import { chromium } from "@playwright/test";
 
 const image = process.env.CONTAINER_IMAGE || "quiltfall:local";
 const previous = process.env.CONTAINER_PREVIOUS_IMAGE || image;
+const dockerContext = process.env.CONTAINER_DOCKER_CONTEXT || "colima";
 const prefix = `quiltfall-test-${process.pid}`;
 const volume = `${prefix}-data`;
 const base = "http://127.0.0.1:3103";
 const directory = mkdtempSync(join(tmpdir(), "quiltfall-test-"));
 const containers = new Set();
 const docker = (...args) =>
-  execFileSync("docker", ["--context", "colima", ...args], {
+  execFileSync("docker", ["--context", dockerContext, ...args], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();

@@ -4,10 +4,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/ui.test.mjs",
-    "lint": "eslint web/*.js web/*.mjs tests/ui.test.mjs tests/browser/*.js scripts/*.mjs *.js --max-warnings=0",
+    "test": "node --test tests/*.test.mjs",
+    "lint": "eslint web/*.js web/*.mjs tests/*.test.mjs tests/browser/*.js scripts/*.mjs *.js --max-warnings=0",
     "vendor:css": "node scripts/vendor-css.mjs",
-    "format:check": "prettier --check web/*.js web/*.mjs web/*.css web/*.html tests/ui.test.mjs tests/browser/*.js scripts/*.mjs *.js",
+    "format:check": "prettier --check web/*.js web/*.mjs web/*.css web/*.html tests/*.test.mjs tests/browser/*.js scripts/*.mjs *.js .github/workflows/*.yml",
     "test:browser": "playwright test",
     "test:container": "node scripts/test-container.mjs",
     "deploy": "node scripts/deploy.mjs"

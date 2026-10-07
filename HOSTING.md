@@ -178,6 +178,10 @@ public routes against an already-running container, use
 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 npx playwright test tests/browser/invite.spec.js`.
 The full play suite uses its own isolated local SQLite fixture database.
 
+`CONTAINER_DOCKER_CONTEXT` selects the test engine; it defaults to `colima`
+locally. CI sets it to `ci`. Use a Docker containerd image store so the compressed
+image-size gate and saved image identity remain consistent between environments.
+
 Deploy the exact locally tested image; do not rebuild remotely:
 
 ```sh
@@ -189,23 +193,52 @@ RELEASE_IMAGE=registry.fly.io/quiltfall@sha256:TESTED_DIGEST npm run deploy
 flyctl checks list
 ```
 
-The deploy script exports and verifies a backup, opens two desktop WebKit tabs
-over HTTPS, then deploys and checks automatic resume and continued play. It
-creates a small finished smoke game. Run the local release gate first.
+The deploy script opens two desktop WebKit tabs over HTTPS, then deploys and
+checks automatic resume and continued play, health and source-matching frontend
+assets. It creates a small finished smoke game. Run the local release gate first.
 
 Use SIGTERM and the configured 15-second timeout. Attached volumes support
-rolling deployments, not blue-green/canary. Before each release, export a
-consistent backup outside FUSE and download it to private storage:
+rolling deployments, not blue-green/canary. Ordinary releases do not create or
+retain database backups. Never roll back to a /tmp image, detach the volume, or
+restore a stale backup over newer accepted moves.
+Roll back only to a compatible image against the same mounted database.
+
+### Automatic builds and deployments
+
+[GitHub Actions](https://github.com/withzombies/quiltfall/actions/workflows/ci.yml)
+runs `.github/workflows/ci.yml` on pull requests targeting `main` and every push
+to `main`, including documentation changes. Rust 1.95.0 and Node 24 run the
+build, tests, formatting and lint checks. All Playwright projects run with one
+worker. Docker 28.4.0 builds one AMD64 image and runs the container release gate.
+
+A successful main push transfers that tested image to the dependent deploy job.
+The job pulls the current single Fly machine's immutable image and tests its
+loaded frontend against the new server. It then pushes the candidate under the
+commit SHA and deploys the immutable digest with rolling replacement and
+`--ha=false`. Image identity is checked after artifact loading and pushing; live
+game continuity, health, assets and the deployed digest must all pass. No remote
+rebuild or production database export occurs.
+
+Each push deploys its final commit once. Main workflows queue with `queue: max`
+and never cancel an earlier pending run. GitHub permits up to 100 pending runs;
+processing follows when each enters the queue. Pull requests build and test
+without access to Fly credentials and cannot deploy. Failed checks stop release.
+Tested image artifacts expire after one day; browser failure diagnostics after
+seven days. Database fixtures are disposable and never uploaded.
+
+The repository secret `FLY_API_TOKEN` contains a Quiltfall app-scoped deploy
+token, exposed only to the main-push deploy job. Rotate it before its one-year
+expiry using the authenticated Fly and GitHub CLIs (the token stays in the pipe):
 
 ```sh
-flyctl ssh console -C 'litefs export -name quiltfall.db /data/predeploy.db'
-flyctl ssh sftp get /data/predeploy.db ./PRIVATE_BACKUP.db
+set -o pipefail
+flyctl tokens create deploy --app quiltfall --name github-actions --expiry 8760h \
+  | gh secret set FLY_API_TOKEN --repo withzombies/quiltfall
 ```
 
-Verify `PRAGMA integrity_check` locally. Fly takes daily volume snapshots (retain
-five days); these complement an external backup. Never roll back to a /tmp
-image, detach the volume, or restore a stale backup over newer accepted moves.
-Roll back only to a compatible image against the same mounted database.
+After confirming the next deployment succeeds, revoke the previous named token
+in Fly's token management. Existing stored backups and Fly volume snapshot
+settings are independent of the CI release process.
 
 ### Initial migration or disaster recovery
 
@@ -274,4 +307,3 @@ browser UI in `web/`. HTTP actions include the expected game revision; server-se
 events carry complete snapshots and animation effects. No game rules run in the
 browser. CSS library versions are locked and vendored with their licenses.
 After updating those packages, run `npm run vendor:css` to refresh the copies.
-

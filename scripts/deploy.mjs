@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { webkit, expect } from "@playwright/test";
+import { verifyRelease } from "./verify-release.mjs";
 
 const image = process.env.RELEASE_IMAGE;
 assert.match(
@@ -10,35 +10,9 @@ assert.match(
   "RELEASE_IMAGE must be the locally tested immutable digest",
 );
 const base = "https://quiltfall.fly.dev";
-const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 await fetch(`${base}/health`).then((response) => {
   assert.ok(response.ok, "deployment needs a healthy existing primary");
 });
-mkdirSync("backups", { recursive: true, mode: 0o700 });
-execFileSync(
-  "flyctl",
-  [
-    "ssh",
-    "console",
-    "--app",
-    "quiltfall",
-    "-C",
-    "litefs export -name quiltfall.db /data/predeploy.db",
-  ],
-  { stdio: "inherit" },
-);
-const backup = `backups/predeploy-${stamp}.db`;
-execFileSync(
-  "flyctl",
-  ["ssh", "sftp", "get", "--app", "quiltfall", "/data/predeploy.db", backup],
-  { stdio: "inherit" },
-);
-assert.equal(
-  execFileSync("sqlite3", [backup, "PRAGMA integrity_check"], {
-    encoding: "utf8",
-  }).trim(),
-  "ok",
-);
 const browser = await webkit.launch();
 try {
   const host = await browser.newContext();
@@ -119,6 +93,7 @@ try {
   await a.getByRole("button", { name: "Resign this game" }).click();
   await a.getByRole("button", { name: "Resign", exact: true }).click();
   await expect(a.locator(".result-card")).toBeVisible();
+  await verifyRelease(base);
   console.log(
     "Live HTTPS redeploy passed: two desktop WebKit tabs resumed automatically, identity/state/revision retained, no navigation, continued play.",
   );

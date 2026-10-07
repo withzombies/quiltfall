@@ -1,0 +1,189 @@
+name: Build, test, and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Queue whole main runs so builds finishing at different speeds cannot overlap
+# deployments. Each push deploys its final SHA; pending runs are never replaced.
+concurrency:
+  group: quiltfall-${{ github.event_name == 'push' && 'production' || github.run_id }}
+  queue: max
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CONTAINER_DOCKER_CONTEXT: ci
+  CONTAINER_IMAGE: quiltfall:ci
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      image-id: ${{ steps.image.outputs.id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Set up Rust
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.95.0
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/debug
+          key: rust-${{ runner.os }}-1.95.0-${{ hashFiles('Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-${{ runner.os }}-1.95.0-${{ hashFiles('Cargo.lock') }}-
+      - name: Install browser dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium webkit
+      - name: Rust build, tests, and lint
+        run: |
+          cargo build --locked
+          cargo test --locked
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Frontend tests and lint
+        run: |
+          npm test
+          npm run lint
+          npm run format:check
+      - name: Browser tests
+        run: npm run test:browser
+      - name: Set up Docker with the containerd image store
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5
+        with:
+          version: v28.4.0
+          context: ci
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - name: Enable FUSE
+        run: |
+          sudo modprobe fuse
+          test -c /dev/fuse
+      - name: Build the release image once
+        id: image
+        run: |
+          docker --context ci buildx build --platform linux/amd64 --provenance=false --load --tag "$CONTAINER_IMAGE" .
+          echo "id=$(docker --context ci image inspect --format '{{.Id}}' "$CONTAINER_IMAGE")" >> "$GITHUB_OUTPUT"
+      - name: Container release gate
+        run: npm run test:container
+      - name: Save the tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: docker --context ci image save "$CONTAINER_IMAGE" | gzip > release-image.tar.gz
+      - name: Upload the tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-image
+          path: release-image.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+      - name: Upload browser failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: browser-failures
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
+
+  deploy:
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      TESTED_IMAGE_ID: ${{ needs.build-and-test.outputs.image-id }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install browser dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium webkit
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+        with:
+          version: 0.4.112
+      - uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5
+        with:
+          version: v28.4.0
+          context: ci
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+      - name: Enable FUSE
+        run: |
+          sudo modprobe fuse
+          test -c /dev/fuse
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-image
+      - name: Load and verify the tested image
+        run: |
+          gzip --decompress --stdout release-image.tar.gz | docker --context ci image load
+          test "$(docker --context ci image inspect --format '{{.Id}}' "$CONTAINER_IMAGE")" = "$TESTED_IMAGE_ID"
+      - name: Find and pull the current production image
+        run: |
+          test -n "$FLY_API_TOKEN"
+          curl --fail --retry 5 --retry-delay 2 https://quiltfall.fly.dev/health
+          flyctl status --app quiltfall --json > production-status.json
+          previous=$(node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const { Machines } = JSON.parse(readFileSync("production-status.json", "utf8"));
+            assert.equal(Machines.length, 1, "production must have exactly one machine");
+            const image = Machines[0].config.image;
+            assert.match(image, /^registry\.fly\.io\/quiltfall@sha256:[a-f0-9]{64}$/);
+            console.log(image);
+          ')
+          flyctl auth docker
+          docker --context ci image pull --platform linux/amd64 "$previous"
+          echo "CONTAINER_PREVIOUS_IMAGE=$previous" >> "$GITHUB_ENV"
+      - name: Test compatibility with the live frontend
+        run: npm run test:container
+      - name: Push and verify the immutable release image
+        run: |
+          flyctl auth docker
+          tag="registry.fly.io/quiltfall:sha-$GITHUB_SHA"
+          docker --context ci image tag "$CONTAINER_IMAGE" "$tag"
+          docker --context ci image push "$tag"
+          release=$(docker --context ci image inspect --format '{{index .RepoDigests 0}}' "$tag")
+          [[ "$release" =~ ^registry\.fly\.io/quiltfall@sha256:[a-f0-9]{64}$ ]]
+          test "$(docker --context ci image inspect --format '{{.Id}}' "$release")" = "$TESTED_IMAGE_ID"
+          echo "RELEASE_IMAGE=$release" >> "$GITHUB_ENV"
+      - name: Deploy and verify live game continuity, health, and assets
+        run: npm run deploy
+      - name: Verify the machine uses the tested digest
+        run: |
+          flyctl status --app quiltfall --json > deployed-status.json
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const { Machines } = JSON.parse(readFileSync("deployed-status.json", "utf8"));
+            assert.equal(Machines.length, 1);
+            assert.equal(Machines[0].config.image, process.env.RELEASE_IMAGE);
+          '
