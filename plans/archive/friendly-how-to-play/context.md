@@ -23,7 +23,7 @@ Choose native animations with percentage transforms so resize needs no pixel
 measurements. Each demo remains independent of live board selectors/state. Static
 final positions, labeled captions and arrows carry meaning without motion.
 
-Resume: commit the verified feature and archive the completed task directory.
+Complete: implementation committed as 60591b9; task docs archived after review.
 
 RED evidence: all six new browser tests failed on the original implementation
 (missing cards/demo nodes). First GREEN: 11/12 engine checks passed. Safari closing

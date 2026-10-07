@@ -1,7 +1,6 @@
 # Tasks
 
 ## Now
-- [ ] Commit the verified feature and archive task docs.
 
 ## Next
 
@@ -10,6 +9,7 @@
 ## Blocked
 
 ## Done
+- [x] Commit the verified feature (60591b9) and archive task docs.
 - [x] Review responsive visuals/acceptance and pass all quality gates: 83 browser
   tests, 41 Rust tests, 6 Node tests, build/fmt/Clippy/lint/format and diff checks.
 - [x] RED → GREEN: cards, accurate native storyboards, visible-only playback/Replay,
