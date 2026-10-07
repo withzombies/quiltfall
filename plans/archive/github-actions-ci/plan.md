@@ -1,5 +1,8 @@
 # Build, test, and deploy with GitHub Actions
 
+Completed October 7, 2026. Main release run 37674805606 and PR verification
+run 37672405907 satisfied the acceptance checks.
+
 Implement the approved plan: build and test PRs targeting main and every main
 push. Each successful main push deploys its final SHA once. Queue main workflows
 with `queue: max` and `cancel-in-progress: false`; do not replace pending runs.

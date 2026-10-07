@@ -27,9 +27,9 @@ GREEN: 10 Node tests, Rust build/41 tests, format and Clippy passed; ESLint has
 zero warnings. The context override passes the real container gate. Saved and
 reloaded the provenance-free AMD64 image; its manifest identity remained exact.
 Local actionlint predates queue max: it accepts the remainder of the workflow,
-and the original file parses/formats cleanly. GitHub must validate the queue key.
-Fly Docker registry credentials expire after three minutes: refresh immediately
-before both pulling and pushing, since continuity tests run between those steps.
+and GitHub accepted the complete queue-enabled workflow. Local interactive Fly
+registry credentials are short-lived; refresh before pulling/pushing. CI uses
+the authorized app-scoped token's one-year lifetime.
 
 All 83 Playwright tests passed with one worker. The default Colima context also
 passed the container gate with the freshly built/reloaded image and the actual
@@ -43,9 +43,6 @@ Requested that exact approval asynchronously. No token was created or disclosed.
 The user explicitly approved token creation and transfer. Configured the
 Quiltfall-scoped one-year token as repository secret FLY_API_TOKEN on October 7,
 2026; verified its name through gh secret list without reading the secret value.
-
-Resume: local implementation is verified and credentials are configured. Push
-main and monitor the first Linux workflow through deployment and digest checks.
 
 First Linux main run 37672031908 passed all 134 tests, Rust/JS lint/format, image
 budgets, artifact identity and actual-production-frontend compatibility. It
@@ -65,3 +62,21 @@ deprecation warnings identified in cache/upload/download actions; updated to
 verified Node 24 commit pins for cache v5 and upload/download-artifact v7.
 GREEN: registry manifest inspection and immutable pull correctly verified the
 aliased published CI image against e921a9e28a9652a2099fcbbd7a7f96545fdbf68d11a09d90fc41d74ddfa295a4.
+
+Completion evidence:
+- [Main run 37674805606](https://github.com/withzombies/quiltfall/actions/runs/37674805606)
+  succeeded for commit 7b70fe4: all 134 tests, formatting/lint, image budgets,
+  saved/loaded identity, current-production compatibility, registry pull-back,
+  live HTTPS game continuity, health/assets and deployed digest checks.
+- [PR run 37672405907](https://github.com/withzombies/quiltfall/actions/runs/37672405907)
+  passed its build/test job and skipped deployment. Draft PR #1 was closed
+  without merging, and its remote/local verification branches were deleted.
+- Independently verified immutable live digest
+  4bb7b37dbcb18bde9e5062e98f89a05ff00262819bef69066420112b92e31639
+  on the same single machine 80ee651b66d6d8 and volume vol_vwnkz260ye69kx8v.
+  Public health and app.js/style.css/state.mjs match the tested source.
+- CI created only the one-day release-image artifact; no database backup
+  artifacts. Existing stored backups and volume settings remain outside scope.
+
+No further implementation work remains. The final archive-only push will run
+the same automatic pipeline; production code and workflow match the green run.
