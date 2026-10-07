@@ -1377,3 +1377,377 @@ test("a delayed rematch response cannot replace a newly opened game", async ({
   await pair.hostContext.close();
   await pair.guestContext.close();
 });
+
+// Inspect the real timelines, retaining native playback rather than mocking it.
+async function inspectRulesMotion(page) {
+  await page.evaluate(() => {
+    window.rulesMotion = [];
+    const animate = Element.prototype.animate;
+    Element.prototype.animate = function (...args) {
+      const animation = animate.apply(this, args);
+      if (this.closest(".rules-demo")) {
+        animation.pause();
+        window.rulesMotion.push({ animation, node: this });
+      }
+      return animation;
+    };
+  });
+}
+
+async function seekRulesDemo(page, demo, fraction) {
+  await page.evaluate(
+    ({ demo, fraction }) => {
+      for (const { animation, node } of window.rulesMotion) {
+        if (
+          node.closest(".rules-demo").dataset.demo === demo &&
+          animation.playState !== "idle"
+        ) {
+          animation.currentTime =
+            animation.effect.getTiming().duration * fraction;
+        }
+      }
+    },
+    { demo, fraction },
+  );
+}
+
+async function finishRulesDemo(page, demo) {
+  await page.evaluate((demo) => {
+    for (const { animation, node } of window.rulesMotion) {
+      if (
+        node.closest(".rules-demo").dataset.demo === demo &&
+        animation.playState !== "idle"
+      )
+        animation.finish();
+    }
+  }, demo);
+}
+
+async function openRulesDemo(page, demo) {
+  const figure = page.locator(`.rules-demo[data-demo="${demo}"]`);
+  await figure.scrollIntoViewIfNeeded();
+  await expect
+    .poll(() =>
+      figure.evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBeGreaterThan(0);
+  return figure;
+}
+
+test("rules guide has friendly cards, complete details and keyboard closing", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  const trigger = page.getByRole("button", { name: "How to play" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.locator(".rules-card")).toHaveCount(5);
+  await expect(dialog).toContainText("Two players, one cozy quilt.");
+  await expect(dialog).toContainText("Moves are final", { ignoreCase: true });
+  await expect(dialog).toContainText("all eight cats");
+  await dialog.getByText("More about nudges", { exact: true }).click();
+  await expect(dialog).toContainText("blocked");
+  await expect(dialog).toContainText("never chain");
+  await dialog.getByText("More about growing cats", { exact: true }).click();
+  await expect(dialog).toContainText("horizontal, vertical, or diagonal");
+  await expect(dialog).toContainText("mix kittens and cats");
+  await expect(dialog).toContainText("Confirm selection");
+  await expect(dialog).toContainText("eight of your pieces");
+  await expect(dialog).toContainText("tap an adult cat to return it");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await dialog.getByRole("button", { name: "Got it—let’s play" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+});
+
+test("rules guide plays visible examples once and Replay restarts real motion", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await inspectRulesMotion(page);
+  expect(await page.evaluate(() => window.rulesMotion.length)).toBe(0);
+  await page.getByRole("button", { name: "How to play" }).click();
+  const place = await openRulesDemo(page, "place");
+  const kitten = place.locator('[data-rules-piece="placed"]');
+  const cell = await place
+    .locator('[data-column="2"][data-row="2"]')
+    .boundingBox();
+  await seekRulesDemo(page, "place", 0.02);
+  expect((await kitten.boundingBox()).y).toBeLessThan(cell.y - 5);
+  await seekRulesDemo(page, "place", 0.3);
+  expect(Math.abs((await kitten.boundingBox()).y - cell.y)).toBeLessThan(3);
+  expect(
+    await page
+      .locator('.rules-demo[data-demo="win"]')
+      .evaluate((node) => node.getAnimations({ subtree: true }).length),
+  ).toBe(0);
+  await finishRulesDemo(page, "place");
+  await expect(place.getByRole("button", { name: /Replay/ })).toBeEnabled();
+  const count = await page.evaluate(() => window.rulesMotion.length);
+  await page.locator('.rules-demo[data-demo="win"]').scrollIntoViewIfNeeded();
+  await place.scrollIntoViewIfNeeded();
+  expect(
+    await place.evaluate(
+      (node) => node.getAnimations({ subtree: true }).length,
+    ),
+  ).toBe(0);
+  await place.getByRole("button", { name: /Replay/ }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.rulesMotion.length))
+    .toBeGreaterThan(count);
+  await seekRulesDemo(page, "place", 0.02);
+  expect((await kitten.boundingBox()).y).toBeLessThan(cell.y - 5);
+  expect(
+    await page.evaluate(() =>
+      window.rulesMotion.every(
+        ({ animation }) => animation.effect.getTiming().duration <= 4000,
+      ),
+    ),
+  ).toBe(true);
+});
+
+test("rules guide demonstrates simultaneous nudges and a legal graduation", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await inspectRulesMotion(page);
+  await page.getByRole("button", { name: "How to play" }).click();
+  const nudge = await openRulesDemo(page, "nudge");
+  const edge = nudge.locator('[data-rules-piece="edge"]');
+  const down = nudge.locator('[data-rules-piece="down"]');
+  const diagonal = nudge.locator('[data-rules-piece="diagonal"]');
+  await seekRulesDemo(page, "nudge", 0.2);
+  const before = await Promise.all(
+    [edge, down, diagonal].map((node) => node.boundingBox()),
+  );
+  await seekRulesDemo(page, "nudge", 0.35);
+  const during = await Promise.all(
+    [edge, down, diagonal].map((node) => node.boundingBox()),
+  );
+  expect(during[0].x).toBeLessThan(before[0].x - 5);
+  expect(during[1].y).toBeGreaterThan(before[1].y + 5);
+  expect(during[2].x).toBeGreaterThan(before[2].x + 5);
+  expect(during[2].y).toBeGreaterThan(before[2].y + 5);
+  await finishRulesDemo(page, "nudge");
+  const quilt = await nudge.locator(".rules-demo-quilt").boundingBox();
+  expect((await edge.boundingBox()).y).toBeGreaterThan(quilt.y + quilt.height);
+
+  const grow = await openRulesDemo(page, "grow");
+  await seekRulesDemo(page, "grow", 0.5);
+  for (const [name, x] of [
+    ["first", 1],
+    ["second", 2],
+    ["third", 3],
+  ]) {
+    const piece = await grow
+      .locator(`[data-rules-piece="${name}"]`)
+      .boundingBox();
+    const target = await grow
+      .locator(`[data-column="${x}"][data-row="2"]`)
+      .boundingBox();
+    expect(Math.abs(piece.x - target.x)).toBeLessThan(3);
+    expect(Math.abs(piece.y - target.y)).toBeLessThan(3);
+    await expect(
+      grow.locator(`[data-rules-piece="${name}"] [src="/cat.svg"]`),
+    ).toHaveCSS("opacity", "1");
+    await expect(
+      grow.locator(`[data-rules-piece="${name}"] [src="/adult.svg"]`),
+    ).toHaveCSS("opacity", "0");
+  }
+  await page.screenshot({
+    path: `test-results/${testInfo.project.name}-rules-growing-line.png`,
+  });
+  await seekRulesDemo(page, "grow", 0.75);
+  await expect(
+    grow.locator('[data-rules-piece="first"] [src="/adult.svg"]'),
+  ).toHaveCSS("opacity", "1");
+  await expect(
+    grow.locator('[data-rules-piece="first"] [src="/cat.svg"]'),
+  ).toHaveCSS("opacity", "0");
+  await finishRulesDemo(page, "grow");
+  await page.screenshot({
+    path: `test-results/${testInfo.project.name}-rules-grown-pool.png`,
+  });
+  const growQuilt = await grow.locator(".rules-demo-quilt").boundingBox();
+  for (const name of ["first", "second", "third"]) {
+    const piece = grow.locator(`[data-rules-piece="${name}"]`);
+    expect((await piece.boundingBox()).y).toBeGreaterThan(
+      growQuilt.y + growQuilt.height,
+    );
+    await expect(piece.locator('[src="/adult.svg"]')).toHaveCSS("opacity", "1");
+    await expect(piece.locator('[src="/cat.svg"]')).toHaveCSS("opacity", "0");
+  }
+});
+
+test("rules guide shows adult strength and leaves a winning cat line on the quilt", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await inspectRulesMotion(page);
+  await page.getByRole("button", { name: "How to play" }).click();
+  const grown = await openRulesDemo(page, "grown");
+  const standing = grown.locator('[data-rules-piece="standing"]');
+  await seekRulesDemo(page, "grown", 0.02);
+  const start = await standing.boundingBox();
+  await seekRulesDemo(page, "grown", 0.45);
+  expect(await standing.boundingBox()).toEqual(start);
+  const moving = grown.locator('[data-rules-piece="adult-neighbor"]');
+  await seekRulesDemo(page, "grown", 0.55);
+  const old = await moving.boundingBox();
+  await seekRulesDemo(page, "grown", 0.9);
+  expect((await moving.boundingBox()).x).toBeGreaterThan(old.x + 5);
+  await finishRulesDemo(page, "grown");
+  await page.screenshot({
+    path: `test-results/${testInfo.project.name}-rules-adult-strength.png`,
+  });
+  const win = await openRulesDemo(page, "win");
+  await finishRulesDemo(page, "win");
+  await page.screenshot({
+    path: `test-results/${testInfo.project.name}-rules-winning-line.png`,
+  });
+  for (const [name, x] of [
+    ["first", 1],
+    ["second", 2],
+    ["third", 3],
+  ]) {
+    const piece = win.locator(`[data-rules-piece="${name}"]`);
+    const box = await piece.boundingBox();
+    const target = await win
+      .locator(`[data-column="${x}"][data-row="2"]`)
+      .boundingBox();
+    expect(Math.abs(box.x - target.x)).toBeLessThan(3);
+    expect(Math.abs(box.y - target.y)).toBeLessThan(3);
+    await expect(piece.locator("img")).toHaveAttribute("src", "/adult.svg");
+  }
+});
+
+test("rules guide cancels hidden or closed examples and respects live reduced motion", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto("/");
+  await inspectRulesMotion(page);
+  const trigger = page.getByRole("button", { name: "How to play" });
+  await trigger.click();
+  const place = await openRulesDemo(page, "place");
+  await page.locator('.rules-demo[data-demo="grow"]').scrollIntoViewIfNeeded();
+  await expect
+    .poll(() =>
+      place.evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBe(0);
+  await page.getByRole("button", { name: "Close rules" }).click();
+  await expect
+    .poll(() =>
+      page
+        .locator("#rules-dialog")
+        .evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBe(0);
+  await trigger.click();
+  await openRulesDemo(page, "place");
+  await page.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      value: true,
+      configurable: true,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect
+    .poll(() =>
+      place.evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBe(0);
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await place.getByRole("button", { name: /Replay/ }).click();
+  await expect
+    .poll(() =>
+      place.evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBeGreaterThan(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      page
+        .locator("#rules-dialog")
+        .evaluate((node) => node.getAnimations({ subtree: true }).length),
+    )
+    .toBe(0);
+  await expect(page.locator(".rules-replay:visible")).toHaveCount(0);
+  await expect(place.locator(".rules-demo-arrows")).toBeVisible();
+  await page.getByRole("button", { name: "Close rules" }).click();
+  await trigger.click();
+  expect(
+    await page
+      .locator("#rules-dialog")
+      .evaluate((node) => node.getAnimations({ subtree: true }).length),
+  ).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test("rules guide fits phones and desktop while an active game stays unchanged", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  const before = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  await pair.host.emulateMedia({ reducedMotion: "reduce" });
+  const desktopContext = await browser.newContext({
+    viewport: { width: 960, height: 844 },
+    isMobile: false,
+    hasTouch: false,
+    reducedMotion: "reduce",
+  });
+  const desktop = await desktopContext.newPage();
+  desktop.on("pageerror", (error) => pair.errors.push(error.message));
+  await desktop.goto("/");
+  for (const [page, width] of [
+    [pair.host, 320],
+    [pair.host, 390],
+    [desktop, 960],
+  ]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.getByRole("button", { name: "How to play" }).click();
+    const dialog = page.locator("#rules-dialog");
+    await expect(dialog.locator(".rules-card")).toHaveCount(5);
+    const close = page.getByRole("button", { name: "Close rules" });
+    const top = await close.boundingBox();
+    await dialog
+      .getByRole("button", { name: "Got it—let’s play" })
+      .scrollIntoViewIfNeeded();
+    const bottom = await close.boundingBox();
+    expect(Math.abs(top.y - bottom.y)).toBeLessThan(2);
+    expect(
+      await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
+    ).toBe(true);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+    expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+    await dialog.evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    await page.screenshot({
+      path: `test-results/${testInfo.project.name}-rules-${width}.png`,
+    });
+    await close.click();
+  }
+  const after = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(after.game).toEqual(before.game);
+  expect(pair.errors).toEqual([]);
+  await desktopContext.close();
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});

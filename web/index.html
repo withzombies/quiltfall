@@ -45,38 +45,171 @@
           ×
         </button>
       </div>
-      <h2 id="rules-title">Get comfy. Get clever.</h2>
-      <ol class="rules-list">
-        <li>
-          <strong>Take turns placing a piece.</strong> Start with eight kittens
-          each. Tap an empty square to place immediately. Moves are final.
-        </li>
-        <li>
-          <strong>Make a little room.</strong> A placed piece nudges its
-          neighbors one square away, including diagonally. Blocked pieces stay
-          put; nudges never chain. Pieces falling off return to their owner’s
-          pool.
-        </li>
-        <li>
-          <strong>Grow your kittens.</strong> A line of three of your pieces
-          graduates its kittens into cats. All three return to your pool. If
-          there are several options, choose just one. With eight pieces on the
-          bed, you can instead retrieve one, graduating it if it’s a kitten.
-        </li>
-        <li>
-          <strong>Cats stand their ground.</strong> Kittens cannot push cats.
-          Cats push both kinds.
-        </li>
-        <li>
-          <strong>Claim the quilt.</strong> Finish your turn with three cats in
-          a line, or all eight cats on the bed, to win. Only the player taking
-          the turn can win.
-        </li>
-      </ol>
-      <p class="small">
-        Your game saves after every move. You can close your phone and pick it
-        up later.
-      </p>
+      <div class="rules-content">
+        <h2 id="rules-title">Get comfy. Get clever.</h2>
+        <p class="rules-intro">
+          Two players, one cozy quilt. Here’s how to make yourself at home.
+        </p>
+        <ol class="rules-list" role="list">
+          <li class="rules-card">
+            <div class="rules-copy">
+              <h3>
+                <span class="rules-number" aria-hidden="true">1</span>Pick a
+                comfy spot
+              </h3>
+              <p>
+                You each start with eight kittens. Pick an available kitten or
+                cat, then tap an empty square. Take turns—moves are final.
+              </p>
+            </div>
+            <figure class="rules-demo" data-demo="place">
+              <div
+                class="rules-demo-stage"
+                role="img"
+                aria-label="A kitten lands on an empty square of the six-by-six quilt."
+              ></div>
+              <figcaption>One empty square. One new friend.</figcaption>
+              <button class="rules-replay" aria-label="Replay placing a piece">
+                Replay <span aria-hidden="true">↻</span>
+              </button>
+            </figure>
+          </li>
+          <li class="rules-card">
+            <div class="rules-copy">
+              <h3>
+                <span class="rules-number" aria-hidden="true">2</span>Give a
+                gentle nudge
+              </h3>
+              <p>
+                Your new piece nudges its neighbors one square away—even
+                diagonally, and even your own pieces!
+              </p>
+              <details>
+                <summary>More about nudges</summary>
+                <p>
+                  If a destination is blocked, that piece stays put. Nudges
+                  happen together and never chain. Pieces that tumble off the
+                  quilt return to their owner’s pool, ready to play again.
+                </p>
+              </details>
+            </div>
+            <figure class="rules-demo" data-demo="nudge">
+              <div
+                class="rules-demo-stage"
+                role="img"
+                aria-label="A kitten at B2 nudges its neighbors together: B3 to B4, C3 diagonally to D4, and A2 off the quilt, back to its owner's pool."
+              ></div>
+              <figcaption>A nudge, a tumble… back in their pool.</figcaption>
+              <button
+                class="rules-replay"
+                aria-label="Replay nudging neighbors"
+              >
+                Replay <span aria-hidden="true">↻</span>
+              </button>
+            </figure>
+          </li>
+          <li class="rules-card">
+            <div class="rules-copy">
+              <h3>
+                <span class="rules-number" aria-hidden="true">3</span>Help your
+                kittens grow
+              </h3>
+              <p>
+                After the nudges, line up three of your pieces. The kittens grow
+                into cats, and the whole group returns to your pool.
+              </p>
+              <details>
+                <summary>More about growing cats</summary>
+                <p>
+                  Lines can be horizontal, vertical, or diagonal, and can mix
+                  kittens and cats. A single eligible line graduates
+                  automatically. If there are several choices, choose just one
+                  highlighted group and tap <strong>Confirm selection</strong>.
+                </p>
+                <p>
+                  If all eight of your pieces are on the quilt and at least one
+                  is a kitten, you can instead tap a ringed kitten to retrieve
+                  and upgrade it, or tap an adult cat to return it to your pool.
+                  You can still choose an eligible group of three. Finish your
+                  choice before your partner’s turn.
+                </p>
+              </details>
+            </div>
+            <figure class="rules-demo" data-demo="grow">
+              <div
+                class="rules-demo-stage"
+                role="img"
+                aria-label="Placing a kitten at D5 nudges D4 into D3, making a line at B3, C3 and D3. Those three kittens become cats and return to your pool."
+              ></div>
+              <figcaption>Three in a row → three cats in your pool.</figcaption>
+              <button class="rules-replay" aria-label="Replay growing kittens">
+                Replay <span aria-hidden="true">↻</span>
+              </button>
+            </figure>
+          </li>
+          <li class="rules-card">
+            <div class="rules-copy">
+              <h3>
+                <span class="rules-number" aria-hidden="true">4</span>Meet the
+                grown-ups
+              </h3>
+              <p>
+                Kittens can nudge kittens. Cats can nudge both kittens and other
+                cats.
+              </p>
+              <p class="rules-tip">
+                A kitten beside a cat? That grown-up stays comfy.
+              </p>
+            </div>
+            <figure class="rules-demo" data-demo="grown">
+              <div
+                class="rules-demo-stage"
+                role="img"
+                aria-label="Two separate turns: a kitten placed at B2 cannot nudge the cat at C2. On the next turn, a cat placed at B5 nudges a kitten at B4 to B3 and a cat at C5 to D5."
+              ></div>
+              <figcaption>Two turns: kitten above, cat below.</figcaption>
+              <button
+                class="rules-replay"
+                aria-label="Replay kittens and adult cats"
+              >
+                Replay <span aria-hidden="true">↻</span>
+              </button>
+            </figure>
+          </li>
+          <li class="rules-card">
+            <div class="rules-copy">
+              <h3>
+                <span class="rules-number" aria-hidden="true">5</span>Win the
+                quilt
+              </h3>
+              <p>
+                Finish your turn with three cats in a line, or all eight cats on
+                the quilt. That cozy quilt is yours!
+              </p>
+              <p class="rules-tip">Only the player taking the turn can win.</p>
+            </div>
+            <figure class="rules-demo" data-demo="win">
+              <div
+                class="rules-demo-stage"
+                role="img"
+                aria-label="Placing a cat at D5 nudges D4 to D3, completing three adult cats in a line at B3, C3 and D3. The winning cats stay on the quilt."
+              ></div>
+              <figcaption>Three grown-ups. One lovely victory.</figcaption>
+              <button
+                class="rules-replay"
+                aria-label="Replay winning the quilt"
+              >
+                Replay <span aria-hidden="true">↻</span>
+              </button>
+            </figure>
+          </li>
+        </ol>
+        <p class="small rules-save">
+          Your game saves after every move. Close your phone, put the kettle on,
+          and pick it up later.
+        </p>
+        <button class="button wide" id="rules-done">Got it—let’s play</button>
+      </div>
     </dialog>
     <noscript
       >Quiltfall needs JavaScript to play. Please enable it in your

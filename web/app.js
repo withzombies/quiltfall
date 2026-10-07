@@ -937,13 +937,239 @@ async function route() {
   }
 }
 
-const rulesDialog = document.querySelector("#rules-dialog");
-document
-  .querySelector("#rules-open")
-  .addEventListener("click", () => rulesDialog.showModal());
-document
-  .querySelector("#rules-close")
-  .addEventListener("click", () => rulesDialog.close());
+function setupRules() {
+  const dialog = document.querySelector("#rules-dialog");
+  const pose = (offset, x, y, extra = {}) => ({ offset, x, y, ...extra });
+  const piece = (name, kind, owner, frames, grows = false) => ({
+    name,
+    kind,
+    owner,
+    frames,
+    grows,
+  });
+  const landing = (x, y) => [
+    pose(0, x, y - 1.5, { opacity: 0, scale: 0.65 }),
+    pose(0.05, x, y - 1, { opacity: 1 }),
+    pose(0.12, x, y + 0.05, { scale: 1.08 }),
+    pose(0.17, x, y - 0.16),
+    pose(0.2, x, y),
+    pose(1, x, y),
+  ];
+  const nudge = (x, y, dx, dy) => [
+    pose(0, x, y),
+    pose(0.2, x, y),
+    pose(0.36, x + dx, y + dy - 0.2, { rotation: dx * 8 }),
+    pose(0.43, x + dx, y + dy + 0.03),
+    pose(0.5, x + dx, y + dy),
+    pose(1, x + dx, y + dy),
+  ];
+  const line = (kind) => [
+    piece("placed", kind, 0, landing(3, 4)),
+    ...[1, 2, 3].map((x, index) => {
+      const frames =
+        x === 3
+          ? nudge(3, 3, 0, -1).slice(0, -1)
+          : [pose(0, x, 2), pose(0.5, x, 2)];
+      if (kind === "kitten")
+        frames.push(
+          pose(0.62, x, 1.85, { scale: 1.1 }),
+          pose(0.85, x + 0.5, 6.6),
+          pose(1, x + 0.5, 6.6),
+        );
+      else
+        frames.push(
+          pose(0.68, x, 1.78, { rotation: index % 2 ? -8 : 8 }),
+          pose(0.82, x, 2),
+          pose(1, x, 2),
+        );
+      return piece(
+        ["first", "second", "third"][index],
+        kind,
+        0,
+        frames,
+        kind === "kitten",
+      );
+    }),
+  ];
+  const examples = {
+    place: {
+      pieces: [piece("placed", "kitten", 0, landing(2, 2))],
+      paths: ["M 250 130 V 205"],
+    },
+    nudge: {
+      pieces: [
+        piece("placed", "kitten", 0, landing(1, 1)),
+        piece("down", "kitten", 0, nudge(1, 2, 0, 1)),
+        piece("diagonal", "kitten", 1, nudge(2, 2, 1, 1)),
+        piece("edge", "kitten", 1, [
+          pose(0, 0, 1),
+          pose(0.2, 0, 1),
+          pose(0.4, -1, 1, { rotation: -20 }),
+          pose(0.5, -1, 1.5, { rotation: -30, opacity: 0.3 }),
+          pose(0.78, 1.5, 6.6),
+          pose(1, 1.5, 6.6),
+        ]),
+      ],
+      paths: [
+        "M 150 275 V 315",
+        "M 278 278 L 322 322",
+        "M 40 150 H -25 Q -40 620 200 650",
+      ],
+      pool: "BACK IN THEIR POOL",
+    },
+    grow: {
+      pieces: line("kitten"),
+      accent: "M 100 205 H 400 V 295 H 100 Z",
+      paths: ["M 350 325 V 285", "M 150 295 H 350 Q 475 490 350 650"],
+      pool: "YOUR GROWN-UP CATS",
+    },
+    grown: {
+      pieces: [
+        piece("placed", "kitten", 0, landing(1, 1)),
+        piece("standing", "cat", 1, [pose(0, 2, 1), pose(1, 2, 1)]),
+        piece("adult-placed", "cat", 1, [
+          pose(0, 1, 2.5, { opacity: 0 }),
+          pose(0.5, 1, 2.5, { opacity: 0, scale: 0.65 }),
+          pose(0.55, 1, 3, { opacity: 1 }),
+          pose(0.62, 1, 4.05, { scale: 1.08 }),
+          pose(0.67, 1, 3.84),
+          pose(0.7, 1, 4),
+          pose(1, 1, 4),
+        ]),
+        piece("kitten-neighbor", "kitten", 1, [
+          pose(0, 1, 3),
+          pose(0.7, 1, 3),
+          pose(0.82, 1, 1.8),
+          pose(0.9, 1, 2),
+          pose(1, 1, 2),
+        ]),
+        piece("adult-neighbor", "cat", 0, [
+          pose(0, 2, 4),
+          pose(0.7, 2, 4),
+          pose(0.82, 3, 3.8, { rotation: 8 }),
+          pose(0.9, 3, 4),
+          pose(1, 3, 4),
+        ]),
+      ],
+      accent: "M 202 132 L 216 168 M 216 132 L 202 168",
+      paths: ["M 150 325 V 285", "M 275 450 H 315"],
+    },
+    win: {
+      pieces: line("cat"),
+      accent: "M 125 295 H 375",
+      paths: ["M 350 325 V 285"],
+    },
+  };
+  const demos = [...dialog.querySelectorAll(".rules-demo")].map((figure) => {
+    const example = examples[figure.dataset.demo];
+    const stage = figure.querySelector(".rules-demo-stage");
+    stage.classList.toggle("rules-demo-has-pool", Boolean(example.pool));
+    stage.innerHTML = `<div class="rules-demo-quilt" aria-hidden="true">${Array.from({ length: 36 }, (_, i) => `<span class="rules-demo-cell" data-column="${i % 6}" data-row="${Math.floor(i / 6)}"></span>`).join("")}</div>
+      <svg class="rules-demo-arrows" viewBox="0 0 600 780" aria-hidden="true"><defs><marker id="rules-arrow-${figure.dataset.demo}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto"><path d="M 1 1 L 8 5 L 1 9"/></marker></defs>${example.accent ? `<path d="${example.accent}"/>` : ""}${example.paths.map((d) => `<path d="${d}" stroke-dasharray="9 7" marker-end="url(#rules-arrow-${figure.dataset.demo})"/>`).join("")}</svg>
+      ${example.pool ? `<span class="rules-demo-pool" aria-hidden="true">${example.pool}</span>` : ""}`;
+    const actors = example.pieces.map((actor) => {
+      const final = actor.frames.at(-1);
+      const node = document.createElement("span");
+      node.className = "rules-demo-piece";
+      node.dataset.rulesPiece = actor.name;
+      node.setAttribute("aria-hidden", "true");
+      node.style.left = `${(final.x * 100) / 6}%`;
+      node.style.top = `${(final.y * 100) / 6}%`;
+      node.innerHTML = actor.grows
+        ? `<img class="rules-demo-image rules-demo-kitten" src="/cat.svg" alt="" draggable="false" data-owner="${actor.owner}"><img class="rules-demo-image" src="/adult.svg" alt="" draggable="false" data-owner="${actor.owner}">`
+        : `<img class="rules-demo-image" src="/${actor.kind === "cat" ? "adult" : "cat"}.svg" alt="" draggable="false" data-owner="${actor.owner}">`;
+      stage.append(node);
+      return { ...actor, node, final };
+    });
+    return {
+      stage,
+      actors,
+      button: figure.querySelector(".rules-replay"),
+      animations: new Set(),
+      played: false,
+    };
+  });
+  function stopDemo(demo) {
+    for (const animation of demo.animations) animation.cancel();
+    demo.animations.clear();
+    demo.button.disabled = false;
+  }
+  function playDemo(demo) {
+    if (!dialog.open || document.hidden || reducedMotion.matches) return;
+    stopDemo(demo);
+    demo.played = true;
+    demo.button.disabled = true;
+    const animate = (node, frames) => {
+      const animation = node.animate(frames, {
+        duration: 3600,
+        easing: "ease-in-out",
+      });
+      demo.animations.add(animation);
+      animation.onfinish = animation.oncancel = () => {
+        demo.animations.delete(animation);
+        if (!demo.animations.size) demo.button.disabled = false;
+      };
+    };
+    for (const actor of demo.actors) {
+      animate(
+        actor.node,
+        actor.frames.map((frame) => ({
+          offset: frame.offset,
+          opacity: frame.opacity ?? 1,
+          transform: `translate(${(frame.x - actor.final.x) * 100}%, ${(frame.y - actor.final.y) * 100}%) rotate(${frame.rotation ?? 0}deg) scale(${frame.scale ?? 1})`,
+        })),
+      );
+      if (actor.grows) {
+        for (const [index, img] of [
+          ...actor.node.querySelectorAll("img"),
+        ].entries()) {
+          animate(img, [
+            { offset: 0, opacity: 1 - index },
+            { offset: 0.58, opacity: 1 - index },
+            { offset: 0.66, opacity: index },
+            { offset: 1, opacity: index },
+          ]);
+        }
+      }
+    }
+  }
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        const demo = demos.find((item) => item.stage === entry.target);
+        if (entry.intersectionRatio >= 0.5) {
+          if (!demo.played) playDemo(demo);
+        } else stopDemo(demo);
+      }
+    },
+    { root: dialog, threshold: 0.5 },
+  );
+  for (const demo of demos)
+    demo.button.addEventListener("click", () => playDemo(demo));
+  document.querySelector("#rules-open").addEventListener("click", () => {
+    dialog.showModal();
+    dialog.scrollTop = 0;
+    for (const demo of demos) {
+      demo.played = false;
+      observer.observe(demo.stage);
+    }
+  });
+  for (const id of ["rules-close", "rules-done"]) {
+    document.getElementById(id).addEventListener("click", () => dialog.close());
+  }
+  dialog.addEventListener("close", () => {
+    observer.disconnect();
+    demos.forEach(stopDemo);
+    document.querySelector("#rules-open").focus({ preventScroll: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) demos.forEach(stopDemo);
+  });
+  reducedMotion.addEventListener("change", () => {
+    if (reducedMotion.matches) demos.forEach(stopDemo);
+  });
+}
+setupRules();
 document.addEventListener("click", (event) => {
   const link = event.target.closest("a[href]");
   if (
