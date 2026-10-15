@@ -263,6 +263,103 @@ test("quilt alternates ice and dusty blue without striped columns", async ({
   await pair.guestContext.close();
 });
 
+test("cat silhouettes are clearly taller than kittens on narrow quilts", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  try {
+    await seedBoard(pair, (state) => {
+      for (const owner of [0, 1]) {
+        const offset = owner * 8;
+        for (let i = 0; i < 4; i++) {
+          state.pieces[offset + i].kind = i % 2 ? "cat" : "kitten";
+          state.pieces[offset + i].pos = {
+            x: 1 + owner * 2 + (i % 2),
+            y: 1 + owner * 2 + Math.floor(i / 2),
+          };
+        }
+        state.pieces[offset + 4].kind = "cat";
+      }
+    });
+    for (const width of [320, 390]) {
+      await pair.host.setViewportSize({ width, height: 844 });
+      for (const owner of [0, 1]) {
+        const heights = { kitten: [], cat: [] };
+        for (let i = 0; i < 4; i++) {
+          const kind = i % 2 ? "cat" : "kitten";
+          const x = 1 + owner * 2 + (i % 2);
+          const y = 1 + owner * 2 + Math.floor(i / 2);
+          const square = pair.host.locator(`[data-x="${x}"][data-y="${y}"]`);
+          await expect(square).toHaveAccessibleName(
+            new RegExp(`${owner ? "Bean" : "Roo"}.*${kind}`),
+          );
+          const img = pair.host.locator(
+            `.piece[data-piece="${owner * 8 + i}"] img`,
+          );
+          await expect(img).toHaveAttribute(
+            "src",
+            kind === "cat" ? "/adult.svg" : "/cat.svg",
+          );
+          const height = await img.evaluate(async (image) => {
+            await image.decode();
+            const canvas = document.createElement("canvas");
+            canvas.width = canvas.height = 100;
+            const context = canvas.getContext("2d");
+            context.filter = getComputedStyle(image).filter;
+            context.drawImage(image, 0, 0, 100, 100);
+            const pixels = context.getImageData(0, 0, 100, 100).data;
+            let top = 100;
+            let bottom = -1;
+            for (let y = 0; y < 100; y++) {
+              for (let x = 0; x < 100; x++) {
+                if (pixels[(y * 100 + x) * 4 + 3] >= 128) {
+                  top = Math.min(top, y);
+                  bottom = Math.max(bottom, y);
+                }
+              }
+            }
+            return bottom - top + 1;
+          });
+          expect(height).toBeGreaterThan(0);
+          heights[kind].push(height);
+          const cell = await square.boundingBox();
+          const art = await img.boundingBox();
+          expect(art.x).toBeGreaterThanOrEqual(cell.x);
+          expect(art.y).toBeGreaterThanOrEqual(cell.y);
+          expect(art.x + art.width).toBeLessThanOrEqual(cell.x + cell.width);
+          expect(art.y + art.height).toBeLessThanOrEqual(cell.y + cell.height);
+        }
+        expect(
+          Math.min(...heights.cat) / Math.max(...heights.kitten),
+        ).toBeGreaterThanOrEqual(1.35);
+      }
+      expect(
+        await pair.host.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await pair.host.screenshot({
+        path: `test-results/${testInfo.project.name}-piece-silhouettes-${width}.png`,
+        fullPage: true,
+      });
+      await pair.host.locator(".quilt").evaluate((node) => {
+        node.style.filter = "grayscale(1)";
+      });
+      await pair.host.screenshot({
+        path: `test-results/${testInfo.project.name}-piece-silhouettes-${width}-grayscale.png`,
+        fullPage: true,
+      });
+      await pair.host.locator(".quilt").evaluate((node) => {
+        node.style.removeProperty("filter");
+      });
+    }
+    expect(pair.errors).toEqual([]);
+  } finally {
+    await pair.hostContext.close();
+    await pair.guestContext.close();
+  }
+});
+
 test("placement lands and rebounds before a neighbor hops on both phones", async ({
   browser,
 }) => {
