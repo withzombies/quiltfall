@@ -105,3 +105,21 @@ git diff --check
   heading, quilt, pool counts and Return to live are clear and fit the viewport.
 - README describes replay and the next-placement capture rule for existing games.
 - No unfinished implementation, undo behavior or unrelated production changes.
+
+## Release preparation
+
+User requested commit, push and deployment. Before pushing, inspected the actual
+main deployment workflow and found that its live smoke test compared the whole
+pre/post-deployment Game JSON exactly. The production version predates last_move,
+so a migrated game adds last_move=null and would incorrectly fail continuity
+verification after an otherwise successful deployment.
+
+Added a focused release-verification helper that treats absent and null recording
+as equivalent while comparing every other field and existing recording exactly.
+RED: the new regression failed before the helper existed. GREEN: both release
+regressions pass, including rejection of board/revision/player/rematch changes,
+unexpected recording creation and loss of an existing saved recording.
+
+Deployment uses the existing main-push CI workflow, which builds/tests one image,
+checks its compatibility with the previous production frontend, and verifies live
+game continuity, source-matching assets, health and the deployed immutable digest.

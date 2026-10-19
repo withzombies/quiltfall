@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { webkit, expect } from "@playwright/test";
-import { verifyRelease } from "./verify-release.mjs";
+import { assertGameContinuity, verifyRelease } from "./verify-release.mjs";
 
 const image = process.env.RELEASE_IMAGE;
 assert.match(
@@ -77,7 +77,7 @@ try {
   const restored = await (
     await host.request.get(`${base}/api/games/${id}`)
   ).json();
-  assert.deepEqual(restored.game, saved.game);
+  assertGameContinuity(saved.game, restored.game);
   for (const [index, context] of [host, guest].entries()) {
     assert.deepEqual(
       await (await context.request.get(`${base}/api/me`)).json(),

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { verifyRelease } from "../scripts/verify-release.mjs";
+import {
+  assertGameContinuity,
+  verifyRelease,
+} from "../scripts/verify-release.mjs";
 
 const assets = new Map(
   ["app.js", "style.css", "state.mjs"].map((asset) => [
@@ -52,4 +55,66 @@ test("release verification rejects missing assets", async (t) => {
     if (path === "/state.mjs") result.status = 404;
   });
   await assert.rejects(verifyRelease(base), /state.mjs must be served/);
+});
+
+test("redeploy continuity accepts an empty recording added to an existing game", () => {
+  const before = {
+    id: "saved-game",
+    players: [
+      { id: "host", name: "Roo" },
+      { id: "guest", name: "Bean" },
+    ],
+    state: JSON.parse(
+      readFileSync(
+        new URL("./fixtures/game-states-v1.json", import.meta.url),
+        "utf8",
+      ),
+    ).placement,
+    revision: 2,
+    created_at: 123,
+    ended_at: null,
+    rematch: { requested_by: null, game_id: null },
+  };
+  const after = { ...structuredClone(before), last_move: null };
+  assertGameContinuity(before, after);
+  for (const change of [
+    (game) => {
+      game.state.pieces[0].pos = { x: 2, y: 2 };
+    },
+    (game) => {
+      game.revision++;
+    },
+    (game) => {
+      game.players[0].id = "different-player";
+    },
+    (game) => {
+      game.rematch.requested_by = 0;
+    },
+    (game) => {
+      game.last_move = { before: game.state, steps: [] };
+    },
+  ]) {
+    const changed = structuredClone(after);
+    change(changed);
+    assert.throws(
+      () => assertGameContinuity(before, changed),
+      assert.AssertionError,
+    );
+  }
+});
+
+test("redeploy continuity preserves an existing recording exactly", () => {
+  const before = {
+    id: "saved-game",
+    revision: 2,
+    last_move: {
+      before: { move_count: 0 },
+      steps: [{ state: { move_count: 1 }, effects: [] }],
+    },
+  };
+  assertGameContinuity(before, structuredClone(before));
+  assert.throws(
+    () => assertGameContinuity(before, { ...before, last_move: null }),
+    assert.AssertionError,
+  );
 });
