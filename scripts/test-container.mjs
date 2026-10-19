@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "@playwright/test";
+import { assertGameContinuity } from "./verify-release.mjs";
 
 const image = process.env.CONTAINER_IMAGE || "quiltfall:local";
 const previous = process.env.CONTAINER_PREVIOUS_IMAGE || image;
@@ -162,10 +163,12 @@ try {
     );
   };
   await replace();
-  assert.deepEqual(
-    await (await host.request.get(`${base}/api/games/${id}`)).json(),
-    beforeWaiting,
-  );
+  const { game: beforeGame, ...beforeEnvelope } = beforeWaiting;
+  const { game: afterGame, ...afterEnvelope } = await (
+    await host.request.get(`${base}/api/games/${id}`)
+  ).json();
+  assertGameContinuity(beforeGame, afterGame);
+  assert.deepEqual(afterEnvelope, beforeEnvelope);
   await b.goto(invite);
   await b.getByLabel("Your name").fill("Container guest");
   await b.getByRole("button", { name: "Join the quilt" }).click();

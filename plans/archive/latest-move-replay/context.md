@@ -132,3 +132,13 @@ reloading, so the new document starts with the intended preference. Preserve all
 replay assertions and the production preference-change cancellation behavior.
 Verification: 20 consecutive replay runs pass (10 Chromium, 10 WebKit), along
 with all 14 JavaScript tests, ESLint, Prettier and git diff checks.
+
+The next release run passed the full application suite and current-image
+container gate, then exposed the same absent/null comparison in the separate
+old-frontend compatibility gate's waiting-game snapshot. Its only diff was
+last_move=null. Reuse assertGameContinuity for that Game and continue comparing
+the entire remaining snapshot envelope exactly. Subsequent same-version
+replacement comparisons remain exact, including their saved recordings.
+Verified locally with the exact CI release artifact and current production
+digest: full old-frontend container compatibility gate passes. All 14 JavaScript
+tests, ESLint, Prettier and diff checks pass as well.
