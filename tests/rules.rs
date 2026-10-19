@@ -1,4 +1,4 @@
-use quiltfall::game::{Action, GameState, Kind, Phase, Pos};
+use quiltfall::game::{Action, GameState, Kind, Motion, Phase, Pos};
 
 fn put(g: &mut GameState, owner: u8, kind: Kind, x: i8, y: i8) -> u8 {
     let p = g
@@ -129,6 +129,281 @@ fn a_single_mixed_line_graduates_into_the_pool() {
 }
 
 #[test]
+fn nudging_an_opponents_mixed_line_immediately_returns_three_cats_to_their_pool() {
+    let mut g = GameState::new(0);
+    g.pieces[0].kind = Kind::Cat;
+    let a = put(&mut g, 1, Kind::Cat, 1, 2);
+    let b = put(&mut g, 1, Kind::Kitten, 2, 2);
+    let c = put(&mut g, 1, Kind::Cat, 3, 3);
+    let t = g
+        .apply(
+            0,
+            Action::Place {
+                kind: Kind::Cat,
+                x: 3,
+                y: 4,
+            },
+        )
+        .unwrap();
+    for id in [a, b, c] {
+        assert_eq!(t.state.pieces[id as usize].pos, None);
+        assert_eq!(t.state.pieces[id as usize].kind, Kind::Cat);
+    }
+    assert_eq!(t.state.turn, 1);
+    assert_eq!(t.state.move_count, 1);
+    assert!(matches!(t.state.phase, Phase::Placement));
+    assert_eq!(t.effects.len(), 5);
+    assert!(matches!(t.effects[0].motion, Motion::Place));
+    assert!(matches!(t.effects[1].motion, Motion::Nudge));
+    assert_eq!(t.effects[1].to, Some(Pos { x: 3, y: 2 }));
+    for effect in &t.effects[2..] {
+        assert!(matches!(effect.motion, Motion::Graduate));
+        assert!(effect.to.is_none());
+        assert_eq!(effect.kind, Kind::Cat);
+    }
+    assert_eq!(t.effects[4].from, Some(Pos { x: 3, y: 2 }));
+}
+
+#[test]
+fn nudged_lines_graduate_for_either_owner_in_every_direction() {
+    // Two fixed pieces, the piece to nudge, and the placement that completes a line.
+    let boards = [
+        [(1, 2), (2, 2), (3, 3), (3, 4)],
+        [(2, 1), (2, 2), (3, 3), (4, 3)],
+        [(1, 1), (2, 2), (3, 4), (3, 5)],
+        [(3, 1), (2, 2), (1, 4), (1, 5)],
+    ];
+    for actor in 0..2 {
+        for owner in 0..2 {
+            for mixed in [false, true] {
+                for [a, b, c, placement] in boards {
+                    let mut g = GameState::new(actor);
+                    let ids: Vec<_> = [a, b, c]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, (x, y))| {
+                            put(
+                                &mut g,
+                                owner,
+                                if mixed && i != 1 {
+                                    Kind::Cat
+                                } else {
+                                    Kind::Kitten
+                                },
+                                x,
+                                y,
+                            )
+                        })
+                        .collect();
+                    g.pieces
+                        .iter_mut()
+                        .find(|p| p.owner == actor && p.pos.is_none())
+                        .unwrap()
+                        .kind = Kind::Cat;
+                    let next = place(&g, Kind::Cat, placement.0, placement.1);
+                    for id in ids {
+                        assert!(
+                            next.pieces[id as usize].pos.is_none(),
+                            "actor={actor} owner={owner} mixed={mixed} placement={placement:?}"
+                        );
+                        assert_eq!(next.pieces[id as usize].kind, Kind::Cat);
+                    }
+                    assert_eq!(next.turn, 1 - actor);
+                    assert!(matches!(next.phase, Phase::Placement));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn opponent_chooses_their_line_after_the_placing_players_graduation() {
+    for own_count in [0, 3, 4] {
+        let mut g = GameState::new(0);
+        for x in 0..own_count {
+            put(&mut g, 0, Kind::Kitten, x, 0);
+        }
+        g.pieces[own_count as usize].kind = Kind::Cat;
+        for x in 0..3 {
+            put(
+                &mut g,
+                1,
+                if x == 0 { Kind::Cat } else { Kind::Kitten },
+                x,
+                2,
+            );
+        }
+        put(&mut g, 1, Kind::Cat, 3, 3);
+        let mut pending = place(&g, Kind::Cat, 3, 4);
+        if own_count == 4 {
+            let Phase::Graduation { options } = &pending.phase else {
+                panic!("expected own choices");
+            };
+            assert_eq!(options, &vec![vec![0, 1, 2], vec![1, 2, 3]]);
+            assert!(
+                pending
+                    .apply(
+                        1,
+                        Action::Graduate {
+                            pieces: options[0].clone()
+                        }
+                    )
+                    .is_err()
+            );
+            pending = pending
+                .apply(
+                    0,
+                    Action::Graduate {
+                        pieces: options[1].clone(),
+                    },
+                )
+                .unwrap()
+                .state;
+        }
+        let Phase::Graduation { options } = &pending.phase else {
+            panic!("expected opponent choices");
+        };
+        assert_eq!(options, &vec![vec![8, 9, 10], vec![9, 10, 11]]);
+        assert_eq!(pending.turn, 0);
+        assert_eq!(pending.move_count, 1);
+        let original = serde_json::to_value(&pending).unwrap();
+        for actor in 0..2 {
+            assert!(
+                pending
+                    .apply(
+                        actor,
+                        Action::Place {
+                            kind: Kind::Kitten,
+                            x: 5,
+                            y: 5
+                        }
+                    )
+                    .is_err()
+            );
+        }
+        assert!(
+            pending
+                .apply(
+                    0,
+                    Action::Graduate {
+                        pieces: options[0].clone()
+                    }
+                )
+                .is_err()
+        );
+        for pieces in [vec![8, 8, 9], vec![0, 9, 10], vec![8], vec![]] {
+            assert!(pending.apply(1, Action::Graduate { pieces }).is_err());
+        }
+        assert_eq!(serde_json::to_value(&pending).unwrap(), original);
+        let done = pending
+            .apply(
+                1,
+                Action::Graduate {
+                    pieces: vec![11, 9, 10],
+                },
+            )
+            .unwrap()
+            .state;
+        assert_eq!(done.turn, 1);
+        assert_eq!(done.move_count, 1);
+        assert!(matches!(done.phase, Phase::Placement));
+        assert_eq!(done.pieces[8].pos, Some(Pos { x: 0, y: 2 }));
+        for id in [9, 10, 11] {
+            assert!(done.pieces[id].pos.is_none());
+            assert_eq!(done.pieces[id].kind, Kind::Cat);
+        }
+        assert_eq!(
+            done.pieces
+                .iter()
+                .filter(|p| p.owner == 0 && p.kind == Kind::Cat && p.pos.is_none())
+                .count(),
+            if own_count == 0 { 0 } else { 3 }
+        );
+        assert_eq!(place(&done, Kind::Kitten, 5, 5).move_count, 2);
+    }
+}
+
+#[test]
+fn both_unique_lines_graduate_placing_player_first() {
+    let mut g = GameState::new(0);
+    for x in 0..3 {
+        put(&mut g, 0, Kind::Kitten, x, 0);
+    }
+    g.pieces[3].kind = Kind::Cat;
+    put(&mut g, 1, Kind::Cat, 1, 2);
+    put(&mut g, 1, Kind::Kitten, 2, 2);
+    put(&mut g, 1, Kind::Cat, 3, 3);
+    let t = g
+        .apply(
+            0,
+            Action::Place {
+                kind: Kind::Cat,
+                x: 3,
+                y: 4,
+            },
+        )
+        .unwrap();
+    let graduates: Vec<_> = t
+        .effects
+        .iter()
+        .filter(|e| matches!(e.motion, Motion::Graduate))
+        .map(|e| e.piece)
+        .collect();
+    assert_eq!(graduates, vec![0, 1, 2, 8, 9, 10]);
+    assert_eq!(t.state.turn, 1);
+    assert_eq!(t.state.move_count, 1);
+}
+
+#[test]
+fn winning_placement_finishes_before_opponent_graduation() {
+    let mut g = GameState::new(0);
+    for x in 0..3 {
+        put(&mut g, 0, Kind::Cat, x, 0);
+        put(&mut g, 1, Kind::Kitten, x, 2);
+    }
+    let t = g
+        .apply(
+            0,
+            Action::Place {
+                kind: Kind::Kitten,
+                x: 5,
+                y: 5,
+            },
+        )
+        .unwrap();
+    assert!(matches!(t.state.phase, Phase::Finished { winner: 0, .. }));
+    assert_eq!(t.effects.len(), 1);
+    assert!(t.state.pieces[8..11].iter().all(|p| p.pos.is_some()));
+}
+
+#[test]
+fn opponent_full_board_does_not_offer_single_piece_retrieval() {
+    for kind in [Kind::Kitten, Kind::Cat] {
+        let mut g = GameState::new(0);
+        for (x, y) in [
+            (0, 0),
+            (2, 0),
+            (4, 0),
+            (1, 2),
+            (3, 2),
+            (5, 2),
+            (0, 4),
+            (5, 4),
+        ] {
+            put(&mut g, 1, kind, x, y);
+        }
+        let next = place(&g, Kind::Kitten, 3, 5);
+        assert!(matches!(next.phase, Phase::Placement));
+        assert_eq!(next.turn, 1);
+        assert!(
+            next.pieces[8..]
+                .iter()
+                .all(|p| p.pos.is_some() && p.kind == kind)
+        );
+    }
+}
+
+#[test]
 fn overlapping_lines_require_one_choice_and_keep_the_turn() {
     let mut g = GameState::new(0);
     for x in 0..4 {
@@ -226,10 +501,12 @@ fn opponent_line_does_not_win_on_the_active_players_turn() {
     for x in 0..3 {
         put(&mut g, 1, Kind::Cat, x, 0);
     }
-    assert!(matches!(
-        place(&g, Kind::Kitten, 5, 5).phase,
-        Phase::Placement
-    ));
+    let next = place(&g, Kind::Kitten, 5, 5);
+    assert!(matches!(next.phase, Phase::Placement));
+    for id in 8..11 {
+        assert_eq!(next.pieces[id].pos, g.pieces[id].pos);
+        assert_eq!(next.pieces[id].kind, Kind::Cat);
+    }
 }
 
 #[test]

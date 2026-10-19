@@ -682,6 +682,199 @@ async fn event_stream_sends_initial_state_and_committed_moves() {
     assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
 }
 
+#[tokio::test]
+async fn nudged_opponent_graduation_is_committed_and_broadcast_with_its_effects() {
+    let (state, routes) = app().await;
+    let (id, host, _) = create(&routes, "Roo").await;
+    let guest = join(&routes, &id, "Bean").await;
+    let mut saved = GameState::new(0);
+    saved.pieces[0].kind = Kind::Cat;
+    for (id, kind, x, y) in [
+        (8, Kind::Cat, 1, 2),
+        (9, Kind::Kitten, 2, 2),
+        (10, Kind::Cat, 3, 3),
+    ] {
+        saved.pieces[id].kind = kind;
+        saved.pieces[id].pos = Some(Pos { x, y });
+    }
+    sqlx::query("UPDATE games SET state=? WHERE id=?")
+        .bind(serde_json::to_string(&saved).unwrap())
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let response = request(
+        &routes,
+        "GET",
+        &format!("/api/games/{id}/events"),
+        &guest,
+        json!(null),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut stream = response.into_body();
+    let initial = next_event_snapshot(&mut stream).await;
+    assert_eq!(initial["game"]["revision"], 1);
+    let response = request(
+        &routes,
+        "POST",
+        &format!("/api/games/{id}/actions"),
+        &host,
+        json!({"revision":1,"action":{"type":"place","kind":"cat","x":3,"y":4}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let committed = body(response).await;
+    let broadcast = next_event_snapshot(&mut stream).await;
+    assert_eq!(broadcast["game"], committed["game"]);
+    assert_eq!(broadcast["effects"], committed["effects"]);
+    assert_eq!(
+        snapshot(&routes, &id, &guest).await["game"],
+        committed["game"]
+    );
+    assert_eq!(committed["game"]["revision"], 2);
+    assert_eq!(committed["game"]["state"]["turn"], 1);
+    assert_eq!(committed["effects"].as_array().unwrap().len(), 5);
+    for piece in &committed["game"]["state"]["pieces"].as_array().unwrap()[8..11] {
+        assert_eq!(piece["kind"], "cat");
+        assert!(piece["pos"].is_null());
+    }
+}
+
+async fn next_event_snapshot(stream: &mut Body) -> Value {
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), stream.frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let event = String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap();
+    serde_json::from_str(
+        event
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn opponent_owns_pending_graduation_across_restart_and_then_places() {
+    let temp = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", temp.path().join("quiltfall.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let routes = router(state.clone());
+    let (id, host, _) = create(&routes, "Roo").await;
+    let guest = join(&routes, &id, "Bean").await;
+    let path = format!("/api/games/{id}/actions");
+    let mut saved = GameState::new(0);
+    for id in 0..4 {
+        saved.pieces[id].pos = Some(Pos { x: id as i8, y: 0 });
+        saved.pieces[id + 8].pos = Some(Pos { x: id as i8, y: 2 });
+    }
+    saved.pieces[4].kind = Kind::Cat;
+    saved.pieces[8].kind = Kind::Cat;
+    saved.pieces[11].kind = Kind::Cat;
+    saved.pieces[11].pos = Some(Pos { x: 3, y: 3 });
+    sqlx::query("UPDATE games SET state=? WHERE id=?")
+        .bind(serde_json::to_string(&saved).unwrap())
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &host,
+        json!({"revision":1,"action":{"type":"place","kind":"cat","x":3,"y":4}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body(response).await["game"]["state"]["phase"]["options"],
+        json!([[0, 1, 2], [1, 2, 3]])
+    );
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &host,
+        json!({"revision":2,"action":{"type":"graduate","pieces":[1,2,3]}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let pending = body(response).await;
+    assert_eq!(pending["game"]["state"]["turn"], 0);
+    assert_eq!(pending["game"]["state"]["move_count"], 1);
+    assert_eq!(
+        pending["game"]["state"]["phase"]["options"],
+        json!([[8, 9, 10], [9, 10, 11]])
+    );
+    state.pool.close().await;
+    drop(routes);
+    drop(state);
+    let reopened = App::open(&url, false).await.unwrap();
+    let routes = router(reopened);
+    for cookie in [&host, &guest] {
+        assert_eq!(
+            snapshot(&routes, &id, cookie).await["game"],
+            pending["game"]
+        );
+        let response = request(
+            &routes,
+            "POST",
+            &path,
+            cookie,
+            json!({"revision":3,"action":{"type":"place","kind":"kitten","x":5,"y":5}}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    for (cookie, pieces) in [
+        (&host, json!([8, 9, 10])),
+        (&guest, json!([8, 8, 9])),
+        (&guest, json!([0, 9, 10])),
+    ] {
+        let response = request(
+            &routes,
+            "POST",
+            &path,
+            cookie,
+            json!({"revision":3,"action":{"type":"graduate","pieces":pieces}}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert_eq!(
+        snapshot(&routes, &id, &guest).await["game"],
+        pending["game"]
+    );
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &guest,
+        json!({"revision":3,"action":{"type":"graduate","pieces":[9,10,11]}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let done = body(response).await;
+    assert_eq!(done["game"]["revision"], 4);
+    assert_eq!(done["game"]["state"]["turn"], 1);
+    assert_eq!(done["game"]["state"]["phase"]["type"], "placement");
+    assert_eq!(done["game"]["state"]["move_count"], 1);
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &guest,
+        json!({"revision":4,"action":{"type":"place","kind":"kitten","x":5,"y":5}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body(response).await["game"]["state"]["move_count"], 2);
+}
+
 async fn finished_pair(router: &Router) -> (String, String, String, Value) {
     let (id, host, _) = create(router, "Roo").await;
     let guest = join(router, &id, "Bean").await;

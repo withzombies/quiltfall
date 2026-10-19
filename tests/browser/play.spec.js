@@ -471,6 +471,138 @@ async function seedBoard(pair, setup) {
   }
 }
 
+test("nudged opponent graduation animates into their pool on both phones", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  await seedBoard(pair, (state) => {
+    state.pieces[0].kind = "cat";
+    for (const [id, kind, x, y] of [
+      [8, "cat", 1, 2],
+      [9, "kitten", 2, 2],
+      [10, "cat", 3, 3],
+    ]) {
+      state.pieces[id].kind = kind;
+      state.pieces[id].pos = { x, y };
+    }
+  });
+  for (const page of [pair.host, pair.guest]) await inspectMotion(page);
+  await pair.host.getByRole("button", { name: /Cat 1 in your pool/ }).click();
+  await pair.host
+    .getByRole("button", { name: "D5: Empty", exact: true })
+    .click();
+  for (const page of [pair.host, pair.guest]) {
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    await finishMotion(page, 0);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(2);
+    await finishMotion(page, 1);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(5);
+    const graduates = await page.evaluate(() =>
+      window.motionLog.slice(2).map(({ node }) => ({
+        id: Number(node.dataset.piece),
+        cat: node.classList.contains("cat"),
+      })),
+    );
+    expect(graduates).toEqual([8, 9, 10].map((id) => ({ id, cat: true })));
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(2)) animation.finish();
+    });
+    await expect(page.locator("#app")).toHaveAttribute("aria-busy", "false");
+    await expect(page.locator(".piece")).toHaveCount(1);
+    await expect(page.locator(".owner-1.player-card")).toContainText(
+      "3 cats in pool",
+    );
+  }
+  const host = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  const guest = await (
+    await pair.guest.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(host.game).toEqual(guest.game);
+  expect(host.game.state.turn).toBe(1);
+  expect(host.game.state.move_count).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("both owners choose graduations before the opponent places, including after refresh", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, (state) => {
+    for (let id = 0; id < 4; id++) state.pieces[id].pos = { x: id, y: 0 };
+    state.pieces[4].kind = "cat";
+    for (let id = 8; id < 11; id++) state.pieces[id].pos = { x: id - 8, y: 2 };
+    state.pieces[8].kind = "cat";
+    state.pieces[11].kind = "cat";
+    state.pieces[11].pos = { x: 3, y: 3 };
+  });
+  await pair.host.getByRole("button", { name: /Cat 1 in your pool/ }).click();
+  await pair.host
+    .getByRole("button", { name: "D5: Empty", exact: true })
+    .click();
+  await expect(pair.host.locator(".option")).toHaveCount(2);
+  await expect(pair.guest.locator(".graduation")).toHaveCount(0);
+  await pair.host.locator('[data-option="1"]').click();
+  await pair.host.getByRole("button", { name: "Confirm selection" }).click();
+  await expect(
+    pair.guest.getByRole("heading", { name: "Choose pieces to graduate" }),
+  ).toBeVisible();
+  await expect(
+    pair.host.getByRole("heading", { name: "Bean is choosing a graduation…" }),
+  ).toBeVisible();
+  await expect(pair.host.locator(".graduation")).toHaveCount(0);
+  // The placing player had selected option 1; the new owner's choice starts at 0.
+  await expect(
+    pair.host.locator('.square.chosen[data-x="0"][data-y="2"]'),
+  ).toHaveCount(1);
+  for (const page of [pair.host, pair.guest]) {
+    await page.reload();
+    await expect(page.locator(".player-card.active")).toHaveClass(/owner-1/);
+    await expect(page.locator(".square.available")).toHaveCount(0);
+    await expect(page.locator(".piece-picker")).toHaveCount(0);
+    await expect(page.locator(".owner-0.player-card")).toContainText(
+      "3 cats in pool",
+    );
+  }
+  await expect(pair.host.locator(".graduation")).toHaveCount(0);
+  await expect(pair.guest.locator(".option")).toHaveCount(2);
+  await pair.guest.locator('[data-option="1"]').click();
+  await pair.guest.getByRole("button", { name: "Confirm selection" }).click();
+  await expect(
+    pair.guest.getByRole("heading", { name: /Your turn/ }),
+  ).toBeVisible();
+  await expect(pair.guest.locator(".owner-1.player-card")).toContainText(
+    "3 cats in pool",
+  );
+  await expect(pair.host.locator(".square.available")).toHaveCount(0);
+  await pair.guest
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  for (const page of [pair.host, pair.guest])
+    await expect(page.locator(".board-footnote")).toContainText("MOVE 2");
+  const host = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  const guest = await (
+    await pair.guest.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(host.game).toEqual(guest.game);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
 test("cats and kittens tumble visibly over every edge in the push direction", async ({
   browser,
 }, testInfo) => {

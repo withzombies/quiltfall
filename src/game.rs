@@ -106,7 +106,13 @@ impl GameState {
             };
             return Ok(Transition { state, effects });
         }
-        if actor != self.turn {
+        // Pending options always contain one owner's pieces. The placing
+        // player's turn continues while their opponent chooses a graduation.
+        let decision_player = match &self.phase {
+            Phase::Graduation { options } => self.pieces[options[0][0] as usize].owner,
+            _ => self.turn,
+        };
+        if actor != decision_player {
             return Err("It is your partner's turn.");
         }
         match action {
@@ -176,7 +182,11 @@ impl GameState {
                     return Err("Choose one of the highlighted graduation options.");
                 }
                 state.graduate(&pieces, &mut effects);
-                state.end_turn();
+                if actor == self.turn {
+                    state.finish_opponent_graduation(&mut effects);
+                } else {
+                    state.end_turn();
+                }
             }
             Action::Resign => unreachable!(),
         }
@@ -207,10 +217,10 @@ impl GameState {
         piece.kind = kind;
     }
 
-    fn lines(&self) -> Vec<Vec<u8>> {
+    fn lines(&self, owner: u8) -> Vec<Vec<u8>> {
         let mut lines = Vec::new();
         for piece in &self.pieces {
-            if piece.owner != self.turn {
+            if piece.owner != owner {
                 continue;
             }
             let Some(pos) = piece.pos else {
@@ -222,7 +232,7 @@ impl GameState {
                     if let Some(i) = self.at(Pos {
                         x: pos.x + step * dx,
                         y: pos.y + step * dy,
-                    }) && self.pieces[i].owner == self.turn
+                    }) && self.pieces[i].owner == owner
                     {
                         line.push(self.pieces[i].id);
                     }
@@ -236,7 +246,7 @@ impl GameState {
     }
 
     fn finish_placement(&mut self, effects: &mut Vec<Effect>) {
-        let mut options = self.lines();
+        let mut options = self.lines(self.turn);
         let on_bed: Vec<u8> = self
             .pieces
             .iter()
@@ -266,13 +276,37 @@ impl GameState {
             }
             options.extend(on_bed.into_iter().map(|id| vec![id]));
         }
+        if !self.resolve_graduation(options, effects) {
+            self.finish_opponent_graduation(effects);
+        }
+    }
+
+    fn finish_opponent_graduation(&mut self, effects: &mut Vec<Effect>) {
+        let options = self
+            .lines(1 - self.turn)
+            .into_iter()
+            .filter(|line| {
+                line.iter()
+                    .any(|id| self.pieces[*id as usize].kind == Kind::Kitten)
+            })
+            .collect();
+        if !self.resolve_graduation(options, effects) {
+            self.end_turn();
+        }
+    }
+
+    // Returns whether this owner must choose before resolution can continue.
+    fn resolve_graduation(&mut self, options: Vec<Vec<u8>>, effects: &mut Vec<Effect>) -> bool {
         match options.len() {
-            0 => self.end_turn(),
+            0 => false,
             1 => {
                 self.graduate(&options[0], effects);
-                self.end_turn();
+                false
             }
-            _ => self.phase = Phase::Graduation { options },
+            _ => {
+                self.phase = Phase::Graduation { options };
+                true
+            }
         }
     }
 

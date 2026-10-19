@@ -2,6 +2,7 @@ import {
   acceptSnapshot,
   canPlace,
   cellLabel,
+  decisionPlayer,
   poolCounts,
   turnMessage,
 } from "./state.mjs";
@@ -230,7 +231,7 @@ function playerCard(owner) {
   const active =
     current.game.players.length === 2 &&
     current.game.state.phase.type !== "finished" &&
-    current.game.state.turn === owner;
+    decisionPlayer(current) === owner;
   return `<div class="player-card owner-${owner} ${active ? "active" : ""}"><div class="player-name"><i class="player-dot"></i><span>${escape(player?.name ?? "Your partner")}</span>${current.you === owner ? '<span class="you-tag">YOU</span>' : ""}</div><div class="player-pool">${player ? `${counts.kitten} kittens · ${counts.cat} cats in pool` : "Saving them a spot"}</div></div>`;
 }
 
@@ -346,7 +347,8 @@ function renderGame() {
   const selected = options[selectedOption] ?? [];
   const eligible = !busy && !animating && connected;
   const yourGraduation =
-    state.phase.type === "graduation" && state.turn === current.you;
+    state.phase.type === "graduation" &&
+    decisionPlayer(current) === current.you;
   const mixed = [...singles].some((id) => state.pieces[id].kind === "cat");
   const graduationHint = !yourGraduation
     ? "Your partner is choosing which pieces to return."
@@ -387,7 +389,7 @@ function renderGame() {
     ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
     ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/invite/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
     ${
-      groups.length && state.turn === current.you
+      groups.length && yourGraduation
         ? `<div class="graduation"><p>Pick one group to return to your pool.</p><div class="graduation-options">${groups
             .map(
               ({ ids, index }) =>
@@ -615,7 +617,8 @@ function enqueue(next, animate = true) {
     )
       return;
     const previous = current;
-    const sameTurn = previous?.game.state.turn === next.game.state.turn;
+    const sameDecisionPlayer =
+      previous && decisionPlayer(previous) === decisionPlayer(next);
     current = next;
     if (
       previous &&
@@ -628,7 +631,7 @@ function enqueue(next, animate = true) {
       route();
       return;
     }
-    if (!sameTurn) selectedOption = 0;
+    if (!sameDecisionPlayer) selectedOption = 0;
     const shouldAnimate =
       animate &&
       !reducedMotion.matches &&

@@ -29,6 +29,13 @@ export function acceptSnapshot(current, next) {
   );
 }
 
+export function decisionPlayer(snapshot) {
+  const { pieces, phase, turn } = snapshot.game.state;
+  return phase.type === "graduation"
+    ? pieces.find((piece) => piece.id === phase.options[0][0]).owner
+    : turn;
+}
+
 export function turnMessage(snapshot) {
   const { players, state } = snapshot.game;
   if (players.length < 2) return "Waiting for your partner…";
@@ -38,9 +45,10 @@ export function turnMessage(snapshot) {
       : `${players[state.phase.winner].name} wins!`;
   }
   if (state.phase.type === "graduation") {
-    return state.turn === snapshot.you
+    const owner = decisionPlayer(snapshot);
+    return owner === snapshot.you
       ? "Choose pieces to graduate"
-      : `${players[state.turn].name} is choosing a graduation…`;
+      : `${players[owner].name} is choosing a graduation…`;
   }
   return state.turn === snapshot.you
     ? "Your turn. Make yourself comfy."

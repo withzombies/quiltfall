@@ -6,6 +6,7 @@ import {
   acceptSnapshot,
   turnMessage,
   cellLabel,
+  decisionPlayer,
 } from "../web/state.mjs";
 
 const snapshot = (revision = 1) => ({
@@ -71,12 +72,39 @@ test("status explains turn, graduation, waiting and winner", () => {
   s.game.state.turn = 1;
   assert.match(turnMessage(s), /GF/);
   s.game.state.phase.type = "graduation";
+  s.game.state.phase.options = [[0], [1]];
   s.game.state.turn = 0;
   assert.match(turnMessage(s), /Choose/);
   s.game.state.phase = { type: "finished", winner: 1 };
   assert.match(turnMessage(s), /GF wins/);
   s.game.players.pop();
   assert.match(turnMessage(s), /Waiting/);
+});
+
+test("opponent graduation status follows the piece owner before their placement", () => {
+  const s = snapshot();
+  s.game.state.pieces.push(
+    { id: 9, owner: 1, kind: "kitten", pos: { x: 3, y: 2 } },
+    { id: 10, owner: 1, kind: "cat", pos: { x: 4, y: 2 } },
+    { id: 11, owner: 1, kind: "kitten", pos: { x: 5, y: 2 } },
+  );
+  s.game.state.phase = {
+    type: "graduation",
+    options: [
+      [8, 9, 10],
+      [9, 10, 11],
+    ],
+  };
+  assert.match(turnMessage(s), /GF is choosing a graduation/);
+  assert.equal(decisionPlayer(s), 1);
+  assert.equal(canPlace(s, "kitten", 0, 0), false);
+  s.you = 1;
+  assert.match(turnMessage(s), /Choose pieces to graduate/);
+  assert.equal(canPlace(s, "kitten", 0, 0), false);
+  s.game.state.turn = 1;
+  s.game.state.phase = { type: "placement" };
+  assert.equal(decisionPlayer(s), 1);
+  assert.match(turnMessage(s), /Your turn/);
 });
 
 test("board cells have useful coordinate and piece labels", () => {

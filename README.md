@@ -51,16 +51,23 @@ Watch for the edges: a well-placed kitten can send several neighbors tumbling!
 
 ### Grow kittens into cats
 
-After the nudges, a straight line of **three of your pieces** graduates its
-kittens into cats. Lines can be horizontal, vertical, or diagonal, and may mix
-kittens and adult cats. All three pieces return to your pool as cats, ready for
-later turns.
+After the nudges, a straight line of **three pieces belonging to either player**
+graduates its kittens into cats. Lines can be horizontal, vertical, or diagonal,
+and may mix kittens and adult cats. All three pieces return to their owner's
+pool as cats, ready for later turns. You can clear an opponent's cats by nudging
+them into a line with a kitten: that line graduates immediately, before their
+next placement.
 
-A line graduates automatically when it is the only available choice. Otherwise,
-choose one highlighted group and tap **Confirm selection**.
+A line graduates automatically when it is its owner's only available choice.
+Otherwise, that player chooses one highlighted group and taps
+**Confirm selection**.
+Resolve the placing player's graduation first, then the opponent's, with at most
+one graduation per player per placement. Finish both players' choices before the
+next placement. This immediate opponent graduation is a Quiltfall rule variant.
 
-If all **eight of your pieces** are on the quilt and at least one is a kitten,
-you can instead tap a ringed kitten to retrieve and upgrade it, or tap an adult cat to return it to your pool.
+If all **eight of your pieces** are on the quilt after your own placement and at
+least one is a kitten, you can instead tap a ringed kitten to retrieve and upgrade
+it, or tap an adult cat to return it to your pool.
 You can still choose an eligible group of three. Resolve the choice before your
 partner's turn begins.
 
