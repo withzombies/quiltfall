@@ -111,6 +111,18 @@ the app selects it for you to copy manually.
 Placement, nudges, off-bed tumbles, and celebrations are animated. Your device's
 **reduced motion** preference is respected.
 
+Missed a move? Choose **Replay last move** beside the move information to watch
+the latest placement, nudges, and any graduation choices resolved so far. Either
+player can replay it, including after refreshing or reopening the game. Replay
+is visible only on your device and does not change the game. The live quilt
+returns when playback finishes, or you can choose **Return to live** at any time.
+A new game update stops replay so you can follow the current position.
+
+With reduced motion enabled, use **Next step** to inspect still frames, then
+**Return to live**. Finished games also offer replay and return to the final
+quilt afterward. Only the latest move is saved; games already in progress start
+recording at their next placement.
+
 ## Run your own quilt
 
 The [hosting guide](HOSTING.md) covers local setup, connecting two phones,

@@ -55,6 +55,19 @@ struct Game {
     created_at: i64,
     ended_at: Option<i64>,
     rematch: Rematch,
+    last_move: Option<LastMove>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct LastMove {
+    before: GameState,
+    steps: Vec<ReplayStep>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct ReplayStep {
+    state: GameState,
+    effects: Vec<Effect>,
 }
 
 #[derive(Clone, Default, Serialize)]
@@ -210,10 +223,13 @@ impl App {
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
         {
-            let mut rows = sqlx::query("SELECT state FROM games").fetch(&pool);
+            let mut rows = sqlx::query("SELECT state,last_move FROM games").fetch(&pool);
             while let Some(row) = rows.next().await {
                 let row = row?;
                 serde_json::from_str::<GameState>(row.get("state"))?;
+                if let Some(recording) = row.get::<Option<&str>, _>("last_move") {
+                    serde_json::from_str::<LastMove>(recording)?;
+                }
             }
         }
         let (updates, _) = broadcast::channel(64);
@@ -513,6 +529,10 @@ async fn load_game(conn: &mut SqliteConnection, id: &str) -> Result<Game, ApiErr
                 .map(|seat| seat as usize),
             game_id: row.get("rematch_game_id"),
         },
+        last_move: row
+            .get::<Option<&str>, _>("last_move")
+            .map(serde_json::from_str)
+            .transpose()?,
     })
 }
 
@@ -561,6 +581,7 @@ async fn create(
                 created_at,
                 ended_at: None,
                 rematch: Rematch::default(),
+                last_move: None,
             },
             you: 0,
             effects: vec![],
@@ -671,8 +692,26 @@ async fn act(
     }
     let result = game
         .state
-        .apply(you as u8, input.action)
+        .apply(you as u8, input.action.clone())
         .map_err(|message| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, message))?;
+    let step = ReplayStep {
+        state: result.state.clone(),
+        effects: result.effects.clone(),
+    };
+    match input.action {
+        Action::Place { .. } => {
+            game.last_move = Some(LastMove {
+                before: game.state.clone(),
+                steps: vec![step],
+            });
+        }
+        Action::Graduate { .. } => {
+            if let Some(recording) = &mut game.last_move {
+                recording.steps.push(step);
+            }
+        }
+        Action::Resign => {}
+    }
     game.state = result.state;
     game.revision += 1;
     let winner_id = if let Phase::Finished { winner, .. } = game.state.phase {
@@ -681,14 +720,22 @@ async fn act(
     } else {
         None
     };
-    sqlx::query("UPDATE games SET state=?,revision=?,ended_at=?,winner_id=? WHERE id=?")
-        .bind(serde_json::to_string(&game.state)?)
-        .bind(game.revision)
-        .bind(game.ended_at)
-        .bind(winner_id)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE games SET state=?,revision=?,ended_at=?,winner_id=?,last_move=? WHERE id=?",
+    )
+    .bind(serde_json::to_string(&game.state)?)
+    .bind(game.revision)
+    .bind(game.ended_at)
+    .bind(winner_id)
+    .bind(
+        game.last_move
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+    )
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     let _ = app.updates.send(Notice {
         game: game.clone(),

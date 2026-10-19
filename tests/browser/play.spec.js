@@ -156,7 +156,7 @@ test("graduation choices highlight one group and persist after refresh", async (
   // Fixture is confined to the isolated browser-test SQLite database.
   execFileSync("python3", [
     "-c",
-    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE games SET state=?,revision=revision+1 WHERE id=?", (sys.argv[2],sys.argv[1])); c.commit()',
+    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE games SET state=?,last_move=NULL,revision=revision+1 WHERE id=?", (sys.argv[2],sys.argv[1])); c.commit()',
     id,
     JSON.stringify(state),
   ]);
@@ -461,7 +461,7 @@ async function seedBoard(pair, setup) {
   setup(state);
   execFileSync("python3", [
     "-c",
-    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE games SET state=?,revision=revision+1 WHERE id=?", (sys.argv[2],sys.argv[1])); c.commit()',
+    'import sqlite3,sys; c=sqlite3.connect("target/browser-data/quiltfall.db"); c.execute("UPDATE games SET state=?,last_move=NULL,revision=revision+1 WHERE id=?", (sys.argv[2],sys.argv[1])); c.commit()',
     pair.id,
     JSON.stringify(state),
   ]);
@@ -470,6 +470,391 @@ async function seedBoard(pair, setup) {
     await expect(page.locator("#connection")).toContainText("Connected");
   }
 }
+
+test("saved replay repeats locally on either phone with blocked nudges and an off-board cat", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, (state) => {
+    state.pieces[0].kind = "cat";
+    state.pieces[1].kind = "cat";
+    state.pieces[1].pos = { x: 3, y: 2 };
+    state.pieces[8].kind = "cat";
+    state.pieces[8].pos = { x: 0, y: 2 };
+    state.pieces[9].pos = { x: 2, y: 2 };
+  });
+  await expect(
+    pair.host.getByRole("button", { name: "Replay last move", exact: true }),
+  ).toHaveCount(0);
+  await pair.host.getByRole("button", { name: /Cat 1 in your pool/ }).click();
+  await pair.host
+    .getByRole("button", { name: "B3: Empty", exact: true })
+    .click();
+  const saved = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  let mutations = 0;
+  for (const page of [pair.host, pair.guest]) {
+    await page.reload();
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await inspectMotion(page);
+    page.on("request", (request) => {
+      if (request.method() === "POST") mutations++;
+    });
+    for (let count = 0; count < 2; count++) {
+      await page.evaluate(() => {
+        window.motionLog = [];
+      });
+      const button = page.getByRole("button", {
+        name: "Replay last move",
+        exact: true,
+      });
+      if (count === 0) {
+        await button.focus();
+        await button.press("Enter");
+      } else await button.click();
+      await expect(
+        page.getByRole("heading", { name: "Replaying move 1", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Return to live", exact: true }),
+      ).toBeEnabled();
+      await expect(
+        page.getByRole("button", { name: "Return to live", exact: true }),
+      ).toBeFocused();
+      await expect(page.locator(".square.available")).toHaveCount(0);
+      await expect(page.locator('.piece[data-piece="8"]')).toHaveCount(1);
+      await expect(
+        page.getByRole("button", { name: /C3:.*kitten/ }),
+      ).toBeDisabled();
+      await expect
+        .poll(() => page.evaluate(() => window.motionLog.length))
+        .toBe(1);
+      await finishMotion(page, 0);
+      await expect
+        .poll(() => page.evaluate(() => window.motionLog.length))
+        .toBe(2);
+      expect(
+        await page.evaluate(() =>
+          Number(window.motionLog[1].node.dataset.piece),
+        ),
+      ).toBe(8);
+      await finishMotion(page, 1);
+      await expect(
+        page.getByRole("button", { name: "Return to live", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Replay last move", exact: true }),
+      ).toBeFocused();
+      await expect(page.locator('.piece[data-piece="8"]')).toHaveCount(0);
+      expect(
+        (await (await page.request.get(`/api/games/${pair.id}`)).json()).game,
+      ).toEqual(saved.game);
+    }
+  }
+  expect(mutations).toBe(0);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("saved replay has reduced-motion steps and restores pending opponent graduation", async ({
+  browser,
+}, testInfo) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, (state) => {
+    state.pieces[0].kind = "cat";
+    for (let id = 8; id < 11; id++) state.pieces[id].pos = { x: id - 8, y: 2 };
+    state.pieces[8].kind = "cat";
+    state.pieces[11].kind = "cat";
+    state.pieces[11].pos = { x: 3, y: 3 };
+  });
+  await pair.host.getByRole("button", { name: /Cat 1 in your pool/ }).click();
+  await pair.host
+    .getByRole("button", { name: "D5: Empty", exact: true })
+    .click();
+  await expect(pair.guest.locator(".option")).toHaveCount(2);
+  await pair.guest
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await expect(pair.guest.locator(".option")).toHaveCount(0);
+  await expect(pair.guest.locator("#replay-status")).toContainText(
+    "Before the move",
+  );
+  await expect(
+    pair.host.getByRole("heading", { name: "Bean is choosing a graduation…" }),
+  ).toBeVisible();
+  await pair.guest
+    .getByRole("button", { name: "Next step", exact: true })
+    .click();
+  await expect(pair.guest.locator("#replay-status")).toContainText("Placement");
+  await pair.guest
+    .getByRole("button", { name: "Next step", exact: true })
+    .click();
+  await expect(pair.guest.locator("#replay-status")).toContainText("Nudges");
+  await pair.guest
+    .getByRole("button", { name: "Return to live", exact: true })
+    .click();
+  await expect(pair.guest.locator(".option")).toHaveCount(2);
+  await pair.guest.locator('[data-option="1"]').click();
+  await pair.guest.getByRole("button", { name: "Confirm selection" }).click();
+  await pair.guest.reload();
+  await pair.guest.setViewportSize({ width: 320, height: 780 });
+  await pair.guest
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  for (let i = 0; i < 3; i++)
+    await pair.guest
+      .getByRole("button", { name: "Next step", exact: true })
+      .click();
+  await expect(pair.guest.locator("#replay-status")).toContainText(
+    "Graduation",
+  );
+  await expect(pair.guest.locator(".owner-1.player-card")).toContainText(
+    "3 cats in pool",
+  );
+  expect(
+    await pair.guest
+      .locator(".piece")
+      .evaluateAll(
+        (nodes) => nodes.flatMap((node) => node.getAnimations()).length,
+      ),
+  ).toBe(0);
+  expect(
+    await pair.guest.evaluate(() => document.documentElement.scrollWidth),
+  ).toBeLessThanOrEqual(320);
+  expect(
+    (await new AxeBuilder({ page: pair.guest }).analyze()).violations,
+  ).toEqual([]);
+  await pair.guest.screenshot({
+    path: `test-results/${testInfo.project.name}-latest-move-replay.png`,
+    fullPage: true,
+  });
+  await pair.guest
+    .getByRole("button", { name: "Return to live", exact: true })
+    .click();
+  await pair.guest
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  await expect(pair.host.locator(".board-footnote")).toContainText("MOVE 2");
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("a new live move cancels saved replay and immediately replaces its recording", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, () => {});
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  await expect(pair.guest.locator(".board-footnote")).toContainText("MOVE 1");
+  await expect(
+    pair.host.getByRole("button", { name: "Replay last move", exact: true }),
+  ).toBeEnabled();
+  await pair.host.emulateMedia({ reducedMotion: "no-preference" });
+  await inspectMotion(pair.host);
+  await pair.host
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await expect
+    .poll(() => pair.host.evaluate(() => window.motionLog.length))
+    .toBe(1);
+  await pair.guest
+    .getByRole("button", { name: "F6: Empty", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("heading", { name: "Replaying move 1", exact: true }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() => pair.host.evaluate(() => window.motionLog.length))
+    .toBe(2);
+  await finishMotion(pair.host, 1);
+  await expect(pair.host.locator(".board-footnote")).toContainText("MOVE 2");
+  await expect(
+    pair.host.getByRole("heading", { name: /Your turn/ }),
+  ).toBeVisible();
+  const after = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  expect(after.game.state.move_count).toBe(2);
+  expect(after.game.last_move.before.move_count).toBe(1);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("saved replay cancels safely on return, resize, preferences, hiding, navigation and failure", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, () => {});
+  await pair.host
+    .getByRole("button", { name: "C3: Empty", exact: true })
+    .click();
+  const saved = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  await expect(
+    pair.host.getByRole("button", { name: "Replay last move", exact: true }),
+  ).toBeEnabled();
+  await pair.host.emulateMedia({ reducedMotion: "no-preference" });
+  await inspectMotion(pair.host);
+  const cancellations = [
+    () =>
+      pair.host
+        .getByRole("button", { name: "Return to live", exact: true })
+        .click(),
+    () => pair.host.setViewportSize({ width: 320, height: 780 }),
+    () => pair.host.emulateMedia({ reducedMotion: "reduce" }),
+    () =>
+      pair.host.evaluate(() => {
+        Object.defineProperty(document, "hidden", {
+          configurable: true,
+          value: true,
+        });
+        document.dispatchEvent(new Event("visibilitychange"));
+      }),
+  ];
+  for (const cancel of cancellations) {
+    await pair.host.emulateMedia({ reducedMotion: "no-preference" });
+    await pair.host.evaluate(() => {
+      window.motionLog = [];
+    });
+    await pair.host
+      .getByRole("button", { name: "Replay last move", exact: true })
+      .click();
+    await expect
+      .poll(() => pair.host.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    await cancel();
+    await expect(
+      pair.host.getByRole("button", { name: "Return to live", exact: true }),
+    ).toHaveCount(0);
+    expect(
+      (await (await pair.host.request.get(`/api/games/${pair.id}`)).json())
+        .game,
+    ).toEqual(saved.game);
+  }
+  await pair.host.evaluate(() => {
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      value: false,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(pair.host.locator("#connection")).toContainText("Connected");
+  await pair.host.emulateMedia({ reducedMotion: "reduce" });
+  await pair.hostContext.setOffline(true);
+  await expect(pair.host.locator("#connection")).toContainText("Offline");
+  await pair.host
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("heading", { name: "Replaying move 1", exact: true }),
+  ).toBeVisible();
+  await pair.hostContext.setOffline(false);
+  await expect(pair.host.locator("#connection")).toContainText("Connected");
+  await expect(
+    pair.host.getByRole("heading", { name: "Replaying move 1", exact: true }),
+  ).toBeVisible();
+  await pair.host
+    .getByRole("button", { name: "Return to live", exact: true })
+    .click();
+  await pair.host.emulateMedia({ reducedMotion: "no-preference" });
+  await pair.host
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await pair.host.getByRole("link", { name: /Your games/ }).click();
+  await pair.host.goto(`/game/${pair.id}`);
+  await expect(
+    pair.host.getByRole("button", { name: "Replay last move", exact: true }),
+  ).toBeVisible();
+  const stats = await (await pair.host.request.get("/api/me")).json();
+  await pair.host.evaluate(() => {
+    const original = Element.prototype.animate;
+    let fail = true;
+    Element.prototype.animate = function (...args) {
+      if (fail && this.matches(".piece")) {
+        fail = false;
+        throw new Error("Simulated playback failure");
+      }
+      return original.apply(this, args);
+    };
+  });
+  await pair.host
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await expect(pair.host.locator("#notice")).toContainText(
+    "Could not finish the replay",
+  );
+  await expect(
+    pair.host.getByRole("button", { name: "Return to live", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    (await (await pair.host.request.get(`/api/games/${pair.id}`)).json()).game,
+  ).toEqual(saved.game);
+  expect((await (await pair.host.request.get("/api/me")).json()).stats).toEqual(
+    stats.stats,
+  );
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
+
+test("a saved winning replay opens the final quilt without replaying the celebration", async ({
+  browser,
+}) => {
+  const pair = await createPair(browser);
+  for (const page of [pair.host, pair.guest])
+    await page.emulateMedia({ reducedMotion: "reduce" });
+  await seedBoard(pair, (state) => {
+    for (let id = 0; id < 2; id++) {
+      state.pieces[id].kind = "cat";
+      state.pieces[id].pos = { x: id + 1, y: 2 };
+    }
+    state.pieces[2].kind = "cat";
+  });
+  await pair.host.getByRole("button", { name: /Cat 1 in your pool/ }).click();
+  await pair.host
+    .getByRole("button", { name: "D3: Empty", exact: true })
+    .click();
+  await expect(pair.host.locator(".cat-party")).toBeVisible();
+  const saved = await (
+    await pair.host.request.get(`/api/games/${pair.id}`)
+  ).json();
+  await pair.host
+    .getByRole("button", { name: "Replay last move", exact: true })
+    .click();
+  await expect(pair.host.locator(".cat-party")).toHaveCount(0);
+  await pair.host
+    .getByRole("button", { name: "Next step", exact: true })
+    .click();
+  await pair.host
+    .getByRole("button", { name: "Return to live", exact: true })
+    .click();
+  await expect(
+    pair.host.getByRole("heading", { name: "The final quilt", exact: true }),
+  ).toBeVisible();
+  await expect(pair.host.locator(".piece.cat")).toHaveCount(3);
+  await expect(pair.host.locator(".cat-party")).toHaveCount(0);
+  expect(
+    (await (await pair.host.request.get(`/api/games/${pair.id}`)).json()).game,
+  ).toEqual(saved.game);
+  expect(pair.errors).toEqual([]);
+  await pair.hostContext.close();
+  await pair.guestContext.close();
+});
 
 test("nudged opponent graduation animates into their pool on both phones", async ({
   browser,
@@ -518,6 +903,31 @@ test("nudged opponent graduation animates into their pool on both phones", async
     await expect(page.locator(".owner-1.player-card")).toContainText(
       "3 cats in pool",
     );
+    await page.evaluate(() => {
+      window.motionLog = [];
+    });
+    await page
+      .getByRole("button", { name: "Replay last move", exact: true })
+      .click();
+    await expect(page.locator('.piece[data-piece="9"]')).toHaveClass(/kitten/);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(1);
+    await finishMotion(page, 0);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(2);
+    await finishMotion(page, 1);
+    await expect
+      .poll(() => page.evaluate(() => window.motionLog.length))
+      .toBe(5);
+    await page.evaluate(() => {
+      for (const { animation } of window.motionLog.slice(2)) animation.finish();
+    });
+    await expect(
+      page.getByRole("button", { name: "Return to live", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator(".piece")).toHaveCount(1);
   }
   const host = await (
     await pair.host.request.get(`/api/games/${pair.id}`)
@@ -586,6 +996,24 @@ test("both owners choose graduations before the opponent places, including after
     "3 cats in pool",
   );
   await expect(pair.host.locator(".square.available")).toHaveCount(0);
+  for (const page of [pair.host, pair.guest]) {
+    await page
+      .getByRole("button", { name: "Replay last move", exact: true })
+      .click();
+    for (const label of ["Placement", "Nudges", "Graduation", "Graduation"]) {
+      await page
+        .getByRole("button", { name: "Next step", exact: true })
+        .click();
+      await expect(page.locator("#replay-status")).toContainText(label);
+    }
+    for (const owner of [0, 1])
+      await expect(page.locator(`.owner-${owner}.player-card`)).toContainText(
+        "3 cats in pool",
+      );
+    await page
+      .getByRole("button", { name: "Return to live", exact: true })
+      .click();
+  }
   await pair.guest
     .getByRole("button", { name: "F6: Empty", exact: true })
     .click();

@@ -36,6 +36,32 @@ export function decisionPlayer(snapshot) {
     : turn;
 }
 
+export function replayFrames(recording) {
+  if (!recording) return [];
+  let state = structuredClone(recording.before);
+  const frames = [{ state: structuredClone(state), label: "Before the move" }];
+  for (const step of recording.steps) {
+    for (const [motion, label] of [
+      ["place", "Placement"],
+      ["nudge", "Nudges"],
+      ["graduate", "Graduation"],
+    ]) {
+      const effects = step.effects.filter((effect) => effect.motion === motion);
+      if (!effects.length) continue;
+      for (const effect of effects) {
+        const piece = state.pieces.find((piece) => piece.id === effect.piece);
+        piece.pos = structuredClone(effect.to);
+        piece.kind = effect.kind;
+      }
+      state.move_count = step.state.move_count;
+      frames.push({ state: structuredClone(state), label });
+    }
+    state = structuredClone(step.state);
+    frames.at(-1).state = structuredClone(state);
+  }
+  return frames;
+}
+
 export function turnMessage(snapshot) {
   const { players, state } = snapshot.game;
   if (players.length < 2) return "Waiting for your partner…";

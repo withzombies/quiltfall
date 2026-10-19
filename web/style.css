@@ -582,6 +582,17 @@ input:disabled {
   gap: 22px;
   margin: 12px 0;
 }
+.replay-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+.replay-controls button {
+  min-height: 44px;
+}
 .game-controls .text-button {
   font-size: 10px;
 }

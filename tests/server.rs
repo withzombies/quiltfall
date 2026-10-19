@@ -618,7 +618,9 @@ async fn pending_graduation_and_sessions_survive_server_restart() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body(response).await["game"]["state"]["turn"], 1);
+    let restored = body(response).await;
+    assert_eq!(restored["game"]["state"]["turn"], 1);
+    assert_eq!(restored["game"]["last_move"], Value::Null);
 }
 
 #[tokio::test]
@@ -790,8 +792,17 @@ async fn opponent_owns_pending_graduation_across_restart_and_then_places() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK);
+    let placed = body(response).await;
     assert_eq!(
-        body(response).await["game"]["state"]["phase"]["options"],
+        placed["game"]["last_move"]["before"],
+        serde_json::to_value(&saved).unwrap()
+    );
+    assert_eq!(
+        placed["game"]["last_move"]["steps"][0]["state"],
+        placed["game"]["state"]
+    );
+    assert_eq!(
+        placed["game"]["state"]["phase"]["options"],
         json!([[0, 1, 2], [1, 2, 3]])
     );
     let response = request(
@@ -804,6 +815,17 @@ async fn opponent_owns_pending_graduation_across_restart_and_then_places() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let pending = body(response).await;
+    assert_eq!(
+        pending["game"]["last_move"]["steps"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        pending["game"]["last_move"]["steps"][1]["effects"],
+        pending["effects"]
+    );
     assert_eq!(pending["game"]["state"]["turn"], 0);
     assert_eq!(pending["game"]["state"]["move_count"], 1);
     assert_eq!(
@@ -859,6 +881,14 @@ async fn opponent_owns_pending_graduation_across_restart_and_then_places() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     let done = body(response).await;
+    assert_eq!(
+        done["game"]["last_move"]["steps"].as_array().unwrap().len(),
+        3
+    );
+    assert_eq!(
+        done["game"]["last_move"]["steps"][2]["state"],
+        done["game"]["state"]
+    );
     assert_eq!(done["game"]["revision"], 4);
     assert_eq!(done["game"]["state"]["turn"], 1);
     assert_eq!(done["game"]["state"]["phase"]["type"], "placement");
@@ -873,6 +903,104 @@ async fn opponent_owns_pending_graduation_across_restart_and_then_places() {
     .await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body(response).await["game"]["state"]["move_count"], 2);
+}
+
+#[tokio::test]
+async fn latest_move_replay_is_durable_replaced_and_preserved_after_resignation() {
+    let temp = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", temp.path().join("replay.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let routes = router(state.clone());
+    let (id, host, created) = create(&routes, "Roo").await;
+    assert_eq!(created["game"].get("last_move"), Some(&Value::Null));
+    let guest = join(&routes, &id, "Bean").await;
+    let initial = snapshot(&routes, &id, &host).await;
+    let cookies = [&host, &guest];
+    let actor = initial["game"]["state"]["turn"].as_u64().unwrap() as usize;
+    let path = format!("/api/games/{id}/actions");
+    let action = json!({"revision":1,"action":{"type":"place","kind":"kitten","x":2,"y":2}});
+    let response = request(&routes, "POST", &path, cookies[actor], action.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let placed = body(response).await;
+    let recording = &placed["game"]["last_move"];
+    assert_eq!(recording["before"], initial["game"]["state"]);
+    assert_eq!(recording["steps"].as_array().unwrap().len(), 1);
+    assert_eq!(recording["steps"][0]["state"], placed["game"]["state"]);
+    assert_eq!(recording["steps"][0]["effects"], placed["effects"]);
+    let response = request(&routes, "POST", &path, cookies[actor], action).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        cookies[1 - actor],
+        json!({"revision":2,"action":{"type":"place","kind":"kitten","x":2,"y":2}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(snapshot(&routes, &id, &host).await["game"], placed["game"]);
+    state.pool.close().await;
+    drop(routes);
+    drop(state);
+    let reopened = App::open(&url, false).await.unwrap();
+    let routes = router(reopened);
+    let restored = snapshot(&routes, &id, &guest).await;
+    assert_eq!(restored["game"], placed["game"]);
+    assert_eq!(restored["effects"], json!([]));
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        cookies[1 - actor],
+        json!({"revision":2,"action":{"type":"place","kind":"kitten","x":3,"y":2}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let second = body(response).await;
+    assert_eq!(
+        second["game"]["last_move"]["before"],
+        placed["game"]["state"]
+    );
+    assert_eq!(
+        second["game"]["last_move"]["steps"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        second["game"]["last_move"]["steps"][0]["effects"],
+        second["effects"]
+    );
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &guest,
+        json!({"revision":3,"action":{"type":"resign"}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body(response).await["game"]["last_move"],
+        second["game"]["last_move"]
+    );
+    let offered = rematch(&routes, &id, &host, 4, "request").await;
+    assert_eq!(offered.status(), StatusCode::OK);
+    assert_eq!(
+        body(offered).await["game"]["last_move"],
+        second["game"]["last_move"]
+    );
+    let accepted = rematch(&routes, &id, &guest, 5, "accept").await;
+    assert_eq!(accepted.status(), StatusCode::OK);
+    let next = body(accepted).await["game"]["rematch"]["game_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        snapshot(&routes, &next, &host).await["game"]["last_move"],
+        Value::Null
+    );
 }
 
 async fn finished_pair(router: &Router) -> (String, String, String, Value) {

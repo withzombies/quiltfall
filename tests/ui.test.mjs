@@ -7,6 +7,7 @@ import {
   turnMessage,
   cellLabel,
   decisionPlayer,
+  replayFrames,
 } from "../web/state.mjs";
 
 const snapshot = (revision = 1) => ({
@@ -110,4 +111,81 @@ test("opponent graduation status follows the piece owner before their placement"
 test("board cells have useful coordinate and piece labels", () => {
   assert.match(cellLabel(snapshot(), 2, 2), /C3.*GF.*kitten/);
   assert.match(cellLabel(snapshot(), 0, 0), /A1.*Empty/);
+});
+
+test("replay frames preserve phase order, simultaneous nudges, kinds and the input", () => {
+  const before = snapshot().game.state;
+  before.pieces[1].kind = "kitten";
+  before.pieces[1].pos = { x: 4, y: 2 };
+  const afterPlacement = structuredClone(before);
+  afterPlacement.move_count = 1;
+  afterPlacement.pieces[0].pos = { x: 3, y: 2 };
+  afterPlacement.pieces[2].pos = null;
+  afterPlacement.pieces[1].pos = { x: 5, y: 2 };
+  afterPlacement.phase = { type: "graduation", options: [[0], [1]] };
+  const graduated = structuredClone(afterPlacement);
+  graduated.pieces[0].pos = null;
+  graduated.pieces[0].kind = "cat";
+  graduated.phase = { type: "placement" };
+  graduated.turn = 1;
+  const recording = {
+    before,
+    steps: [
+      {
+        state: afterPlacement,
+        effects: [
+          {
+            piece: 0,
+            from: null,
+            to: { x: 3, y: 2 },
+            kind: "kitten",
+            motion: "place",
+          },
+          {
+            piece: 8,
+            from: { x: 2, y: 2 },
+            to: null,
+            kind: "kitten",
+            motion: "nudge",
+          },
+          {
+            piece: 1,
+            from: { x: 4, y: 2 },
+            to: { x: 5, y: 2 },
+            kind: "kitten",
+            motion: "nudge",
+          },
+        ],
+      },
+      {
+        state: graduated,
+        effects: [
+          {
+            piece: 0,
+            from: { x: 3, y: 2 },
+            to: null,
+            kind: "cat",
+            motion: "graduate",
+          },
+        ],
+      },
+    ],
+  };
+  const original = structuredClone(recording);
+  const frames = replayFrames(recording);
+  assert.deepEqual(
+    frames.map((frame) => frame.label),
+    ["Before the move", "Placement", "Nudges", "Graduation"],
+  );
+  assert.equal(frames[1].state.pieces[0].kind, "kitten");
+  assert.deepEqual(frames[1].state.pieces[2].pos, { x: 2, y: 2 });
+  assert.equal(frames[2].state.pieces[2].pos, null);
+  assert.deepEqual(frames[1].state.pieces[1].pos, { x: 4, y: 2 });
+  assert.deepEqual(frames[2].state.pieces[1].pos, { x: 5, y: 2 });
+  assert.deepEqual(frames.at(-1).state, graduated);
+  assert.deepEqual(recording, original);
+  frames[0].state.pieces[0].kind = "cat";
+  assert.equal(recording.before.pieces[0].kind, "kitten");
+  assert.equal(frames[1].state.pieces[0].kind, "kitten");
+  assert.deepEqual(replayFrames(null), []);
 });

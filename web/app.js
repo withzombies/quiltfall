@@ -4,6 +4,7 @@ import {
   cellLabel,
   decisionPlayer,
   poolCounts,
+  replayFrames,
   turnMessage,
 } from "./state.mjs";
 
@@ -31,6 +32,7 @@ let updates = Promise.resolve();
 let noticeTimer;
 let historyTab = "active";
 let showFinalQuilt = false;
+let replay = null;
 
 function escape(value) {
   return String(value ?? "").replace(
@@ -225,10 +227,17 @@ function renderError(error) {
     });
 }
 
+function displayedSnapshot() {
+  return replay
+    ? { ...current, game: { ...current.game, state: replay.state } }
+    : current;
+}
+
 function playerCard(owner) {
   const player = current.game.players[owner];
-  const counts = poolCounts(current, owner);
+  const counts = poolCounts(displayedSnapshot(), owner);
   const active =
+    !replay &&
     current.game.players.length === 2 &&
     current.game.state.phase.type !== "finished" &&
     decisionPlayer(current) === owner;
@@ -238,6 +247,88 @@ function playerCard(owner) {
 function position(node, pos) {
   node.style.left = `${(pos.x * 100) / 6}%`;
   node.style.top = `${(pos.y * 100) / 6}%`;
+}
+
+function replayControls() {
+  if (replay) {
+    return `<div class="replay-controls" role="group" aria-label="Move replay"><button class="button secondary" id="replay-return">Return to live</button>${reducedMotion.matches && replay.index < replay.frames.length - 1 ? '<button class="button" id="replay-next">Next step</button>' : ""}</div>`;
+  }
+  return current.game.last_move?.steps.length
+    ? `<div class="replay-controls"><button class="text-button" id="replay-last-move" ${busy || animating ? "disabled" : ""}><span aria-hidden="true">↻</span> Replay last move</button></div>`
+    : "";
+}
+
+function bindReplayControls() {
+  root
+    .querySelector("#replay-last-move")
+    ?.addEventListener("click", startReplay);
+  root.querySelector("#replay-return")?.addEventListener("click", returnToLive);
+  root.querySelector("#replay-next")?.addEventListener("click", () => {
+    if (!replay || !reducedMotion.matches) return;
+    const frame = replay.frames[replay.index + 1];
+    if (!frame) return;
+    replay.index++;
+    replay.state = frame.state;
+    replay.label = frame.label;
+    renderGame();
+    (
+      root.querySelector("#replay-next") ?? root.querySelector("#replay-return")
+    )?.focus({ preventScroll: true });
+  });
+}
+
+function returnToLive() {
+  if (!replay) return;
+  stopMotion();
+  renderGame();
+  root.querySelector("#replay-last-move")?.focus({ preventScroll: true });
+}
+
+async function startReplay() {
+  const recording = current?.game.last_move;
+  if (!recording?.steps.length || busy || animating || replay) return;
+  const controller = new AbortController();
+  const frames = replayFrames(recording);
+  const session = {
+    recording,
+    controller,
+    frames,
+    index: 0,
+    state: frames[0].state,
+    label: frames[0].label,
+  };
+  replay = session;
+  if (current.game.state.phase.type === "finished") showFinalQuilt = true;
+  renderGame();
+  root.querySelector("#replay-return")?.focus({ preventScroll: true });
+  if (reducedMotion.matches) return;
+  motionController = controller;
+  try {
+    for (const step of recording.steps) {
+      if (replay !== session || controller.signal.aborted) return;
+      session.label = "Playing the move";
+      renderGame();
+      animating = true;
+      lockMoves();
+      await animateEffects(
+        {
+          ...current,
+          game: { ...current.game, state: step.state },
+          effects: step.effects,
+        },
+        controller.signal,
+      );
+      if (replay !== session || controller.signal.aborted) return;
+      animating = false;
+      session.state = step.state;
+      renderGame();
+    }
+  } catch {
+    if (!controller.signal.aborted)
+      message("Could not finish the replay. Back to the live quilt.");
+  } finally {
+    if (replay === session) returnToLive();
+  }
 }
 
 function renderRematchControls() {
@@ -273,6 +364,8 @@ function renderResult() {
   if (root.querySelector(".result-card")?.dataset.resultKey === id) {
     root.querySelector("#connection").textContent = connectionLabel();
     renderRematchControls();
+    const replayButton = root.querySelector("#replay-last-move");
+    if (replayButton) replayButton.disabled = busy || animating;
     return;
   }
   const winner = state.phase.winner;
@@ -302,9 +395,11 @@ function renderResult() {
     <div class="winner-chip">${escape(name)} <span>· quilt champion</span></div>
     <p class="result-details"><span class="result-reason">${reason}</span> · ${state.move_count} moves</p>
     <div class="rematch-controls" aria-live="polite"></div>
+    ${replayControls()}
     <div class="result-links"><button class="text-button" id="view-quilt">View final quilt</button><a href="/">Your games</a></div>
   </section>`;
   renderRematchControls();
+  bindReplayControls();
   document.querySelector("#view-quilt").addEventListener("click", () => {
     showFinalQuilt = true;
     renderGame();
@@ -317,6 +412,11 @@ function renderGame() {
     lockMoves();
     return;
   }
+  const replayFocus =
+    replay &&
+    ["replay-return", "replay-next"].includes(document.activeElement?.id)
+      ? document.activeElement.id
+      : null;
   const existing = new Map(
     [...root.querySelectorAll(".piece")].map((node) => [
       Number(node.dataset.piece),
@@ -324,29 +424,32 @@ function renderGame() {
     ]),
   );
   root.setAttribute("aria-busy", String(busy || animating));
-  const { state, players } = current.game;
-  const finished = state.phase.type === "finished";
-  if (finished && !showFinalQuilt) {
+  const shown = displayedSnapshot();
+  const { state, players } = shown.game;
+  const finished = current.game.state.phase.type === "finished";
+  if (finished && !showFinalQuilt && !replay) {
     renderResult();
     return;
   }
   const waiting = players.length < 2;
-  const counts = poolCounts(current, current.you);
-  if (counts[selectedKind] === 0)
+  const counts = poolCounts(shown, current.you);
+  if (!replay && counts[selectedKind] === 0)
     selectedKind = counts.kitten ? "kitten" : "cat";
-  const options = state.phase.type === "graduation" ? state.phase.options : [];
+  const options =
+    !replay && state.phase.type === "graduation" ? state.phase.options : [];
   const singles = new Set(
     options.filter((ids) => ids.length === 1).map((ids) => ids[0]),
   );
   const groups = options
     .map((ids, index) => ({ ids, index }))
     .filter((option) => option.ids.length > 1);
-  if (!groups.some((option) => option.index === selectedOption)) {
+  if (!replay && !groups.some((option) => option.index === selectedOption)) {
     selectedOption = groups[0]?.index ?? -1;
   }
   const selected = options[selectedOption] ?? [];
-  const eligible = !busy && !animating && connected;
+  const eligible = !busy && !animating && connected && !replay;
   const yourGraduation =
+    !replay &&
     state.phase.type === "graduation" &&
     decisionPlayer(current) === current.you;
   const mixed = [...singles].some((id) => state.pieces[id].kind === "cat");
@@ -369,24 +472,27 @@ function renderGame() {
       const action = upgradeable
         ? ` — ${p.kind === "cat" ? "Return cat" : "Upgrade kitten"}`
         : "";
-      squares += `<button class="square ${available ? "available" : ""} ${upgradeable ? "upgradeable" : ""} ${highlighted ? "chosen" : ""}" data-x="${x}" data-y="${y}" ${upgradeable ? `data-upgrade="${p.id}"` : ""} aria-label="${escape(cellLabel(current, x, y) + action)}" ${available || upgradeable ? "" : "disabled"}></button>`;
+      squares += `<button class="square ${available ? "available" : ""} ${upgradeable ? "upgradeable" : ""} ${highlighted ? "chosen" : ""}" data-x="${x}" data-y="${y}" ${upgradeable ? `data-upgrade="${p.id}"` : ""} aria-label="${escape(cellLabel(shown, x, y) + action)}" ${available || upgradeable ? "" : "disabled"}></button>`;
     }
   }
-  const subtitle = waiting
-    ? "Share the invite below to get started."
-    : finished
-      ? `Finished in ${state.move_count} moves. Saved to your past games.`
-      : state.phase.type === "graduation"
-        ? graduationHint
-        : `Tap an empty square to place a ${selectedKind}. Moves are final.`;
+  const subtitle = replay
+    ? replay.label
+    : waiting
+      ? "Share the invite below to get started."
+      : finished
+        ? `Finished in ${state.move_count} moves. Saved to your past games.`
+        : state.phase.type === "graduation"
+          ? graduationHint
+          : `Tap an empty square to place a ${selectedKind}. Moves are final.`;
   root.innerHTML = `<section class="game-page">
-    <div class="game-nav">${finished ? '<button class="text-button" id="celebration-back">← Back to celebration</button>' : '<a href="/">← Your games</a>'}<span class="connection ${connected ? "" : "offline"}" id="connection">${connectionLabel()}</span></div>
+    <div class="game-nav">${finished && !replay ? '<button class="text-button" id="celebration-back">← Back to celebration</button>' : '<a href="/">← Your games</a>'}<span class="connection ${connected ? "" : "offline"}" id="connection">${connectionLabel()}</span></div>
     <div class="players">${playerCard(0)}<span class="versus">&amp;</span>${playerCard(1)}</div>
-    <div class="game-status" aria-live="polite"><h1>${finished ? "The final quilt" : escape(turnMessage(current))}</h1><p>${escape(subtitle)}</p></div>
+    <div class="game-status" aria-live="polite"><h1>${replay ? `Replaying move ${replay.recording.steps[0].state.move_count}` : finished ? "The final quilt" : escape(turnMessage(current))}</h1><p ${replay ? 'id="replay-status"' : ""}>${escape(subtitle)}</p></div>
     <div class="motion-viewport"><div class="bed-frame"><div class="quilt"><div class="board" role="group" aria-label="Six by six quilt board">${squares}</div><div class="pieces-layer" aria-hidden="true"></div></div></div></div>
     <div class="board-footnote"><span>A LITTLE NUDGE GOES A LONG WAY</span><span>MOVE ${state.move_count}</span></div>
-    ${finished ? '<div class="rematch-controls" aria-live="polite"></div>' : ""}
-    ${!waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
+    ${replayControls()}
+    ${finished && !replay ? '<div class="rematch-controls" aria-live="polite"></div>' : ""}
+    ${!replay && !waiting && !finished && state.phase.type === "placement" ? `<div class="piece-picker" aria-label="Choose a piece">${["kitten", "cat"].map((kind) => `<button class="pick ${kind === selectedKind ? "selected" : ""}" data-kind="${kind}" aria-pressed="${kind === selectedKind}" ${counts[kind] && eligible && state.turn === current.you ? "" : "disabled"}>${cat(kind, current.you)}<span><strong>${kind === "cat" ? "Cat" : "Kitten"}</strong><small>${counts[kind]} in your pool</small></span></button>`).join("")}</div>` : ""}
     ${waiting ? `<div class="invite-box"><p>Every quilt needs a second cat person.</p><div class="invite-link"><input id="invite-url" aria-label="Invite link" readonly value="${escape(location.origin + "/invite/" + gameId)}"><button class="button" id="copy-invite">Copy link</button></div><p class="small" style="margin:8px 0 0">Send this link to your partner. Keep it just between you.</p></div>` : ""}
     ${
       groups.length && yourGraduation
@@ -405,9 +511,10 @@ function renderGame() {
             )}</div><button class="button wide" id="graduate" ${eligible ? "" : "disabled"}>Confirm selection →</button></div>`
         : ""
     }
-    ${!waiting && !finished ? '<div class="game-controls"><button class="text-button" id="resign">Resign this game</button><span class="text-button">Saved after every move</span></div>' : ""}
+    ${!replay && !waiting && !finished ? '<div class="game-controls"><button class="text-button" id="resign">Resign this game</button><span class="text-button">Saved after every move</span></div>' : ""}
   </section>`;
   if (finished) renderRematchControls();
+  bindReplayControls();
   document.querySelector("#celebration-back")?.addEventListener("click", () => {
     showFinalQuilt = false;
     renderGame();
@@ -461,6 +568,8 @@ function renderGame() {
   document
     .querySelector("#resign")
     ?.addEventListener("click", confirmResignation);
+  if (replayFocus)
+    root.querySelector(`#${replayFocus}`)?.focus({ preventScroll: true });
 }
 
 function pieceNode(piece) {
@@ -472,9 +581,11 @@ function pieceNode(piece) {
 }
 
 function lockMoves() {
-  root.setAttribute("aria-busy", "true");
+  root.setAttribute("aria-busy", String(!replay));
   root
-    .querySelectorAll(".square, .pick, .option, #graduate, #resign")
+    .querySelectorAll(
+      ".square, .pick, .option, #graduate, #resign, #replay-last-move",
+    )
     .forEach((node) => {
       node.disabled = true;
     });
@@ -482,6 +593,8 @@ function lockMoves() {
 
 function stopMotion() {
   motionController?.abort();
+  replay?.controller.abort();
+  replay = null;
   motionController = null;
   animating = false;
 }
@@ -608,6 +721,10 @@ async function animateEffects(next, signal) {
 }
 
 function enqueue(next, animate = true) {
+  if (replay && next.game.id === gameId && acceptSnapshot(current, next)) {
+    stopMotion();
+    renderGame();
+  }
   const epoch = routeEpoch;
   updates = updates.then(async () => {
     if (
@@ -662,7 +779,7 @@ function enqueue(next, animate = true) {
 }
 
 async function submit(action, endpoint = "actions") {
-  if (busy || animating || !connected || !current) return;
+  if (busy || animating || replay || !connected || !current) return;
   busy = true;
   const id = gameId;
   const epoch = routeEpoch;
@@ -852,7 +969,7 @@ async function copyInvite() {
 }
 
 function confirmResignation() {
-  if (busy || animating || !connected) return;
+  if (busy || animating || replay || !connected) return;
   const dialog = document.createElement("dialog");
   dialog.setAttribute("aria-labelledby", "resign-title");
   dialog.innerHTML =
@@ -1207,13 +1324,13 @@ window.addEventListener("offline", resumeConnection);
 route();
 
 reducedMotion.addEventListener("change", () => {
-  if (reducedMotion.matches && animating) {
+  if (animating || replay) {
     stopMotion();
     renderGame();
   }
 });
 window.addEventListener("resize", () => {
-  if (animating) {
+  if (animating || replay) {
     stopMotion();
     renderGame();
   }
