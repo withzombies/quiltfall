@@ -123,3 +123,12 @@ unexpected recording creation and loss of an existing saved recording.
 Deployment uses the existing main-push CI workflow, which builds/tests one image,
 checks its compatibility with the previous production frontend, and verifies live
 game continuity, source-matching assets, health and the deployed immutable digest.
+
+The first CI release run passed 98 browser tests but exposed a WebKit fixture
+race in the remaining replay test. Its trace shows a reduced-motion Next step
+control after changing the emulated preference to no-preference, then replay
+cancellation when the delayed media change arrives. Apply the preference before
+reloading, so the new document starts with the intended preference. Preserve all
+replay assertions and the production preference-change cancellation behavior.
+Verification: 20 consecutive replay runs pass (10 Chromium, 10 WebKit), along
+with all 14 JavaScript tests, ESLint, Prettier and git diff checks.

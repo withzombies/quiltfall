@@ -497,8 +497,10 @@ test("saved replay repeats locally on either phone with blocked nudges and an of
   ).json();
   let mutations = 0;
   for (const page of [pair.host, pair.guest]) {
-    await page.reload();
     await page.emulateMedia({ reducedMotion: "no-preference" });
+    // Start the new document with its final preference; WebKit can otherwise
+    // deliver the media change after replay starts and correctly cancel it.
+    await page.reload();
     await inspectMotion(page);
     page.on("request", (request) => {
       if (request.method() === "POST") mutations++;
