@@ -1,0 +1,6 @@
+- [x] Correct engine continuation and final eight-piece checks.
+- [x] Update UI, instructions and browser expectation.
+- [x] Add rules regressions and run Rust/Node checks.
+- [x] Finish full browser verification: 99 passed.
+- [x] Extend server restart coverage for repeated choices.
+- [x] Follow user clarification: use confirmed Quiltfall rules; stop external comparison.

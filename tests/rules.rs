@@ -665,3 +665,52 @@ fn effects_distinguish_placement_nudges_and_adult_graduation() {
     assert_eq!(effects[0]["kind"], "cat");
     assert!(effects[0]["to"].is_null());
 }
+
+#[test]
+fn eighth_piece_resolves_triple_before_full_board_choice() {
+    let mut g = GameState::new(0);
+    for (x, y) in [(0, 0), (1, 0), (2, 0), (4, 0), (1, 2), (3, 2), (5, 2)] {
+        put(&mut g, 0, Kind::Kitten, x, y);
+    }
+    let next = place(&g, Kind::Kitten, 5, 5);
+    assert!(matches!(next.phase, Phase::Placement));
+    assert_eq!(next.turn, 1);
+    assert_eq!(
+        next.pieces
+            .iter()
+            .filter(|p| p.owner == 0 && p.pos.is_some())
+            .count(),
+        5
+    );
+}
+
+#[test]
+fn disjoint_triples_all_graduate_before_turn_ends() {
+    let mut g = GameState::new(0);
+    for (x, y) in [(0, 0), (1, 0), (2, 0), (0, 3), (1, 3), (2, 3)] {
+        put(&mut g, 0, Kind::Kitten, x, y);
+    }
+    let pending = place(&g, Kind::Kitten, 5, 5);
+    let Phase::Graduation { options } = &pending.phase else {
+        panic!("expected triple choice");
+    };
+    assert!(options.iter().all(|group| group.len() == 3));
+    let done = pending
+        .apply(
+            0,
+            Action::Graduate {
+                pieces: options[0].clone(),
+            },
+        )
+        .unwrap()
+        .state;
+    assert!(matches!(done.phase, Phase::Placement));
+    assert_eq!(done.turn, 1);
+    assert_eq!(
+        done.pieces
+            .iter()
+            .filter(|p| p.owner == 0 && p.kind == Kind::Cat && p.pos.is_none())
+            .count(),
+        6
+    );
+}

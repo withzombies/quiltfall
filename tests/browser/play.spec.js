@@ -1433,7 +1433,7 @@ test("mixed full quilts allow an adult return with keyboard activation", async (
   await pair.guestContext.close();
 });
 
-test("full quilts keep triple choices alongside direct piece taps", async ({
+test("full quilts resolve triples before offering single piece retrieval", async ({
   browser,
 }) => {
   const pair = await createPair(browser);
@@ -1455,15 +1455,8 @@ test("full quilts keep triple choices alongside direct piece taps", async ({
   await pair.host
     .getByRole("button", { name: "F6: Empty", exact: true })
     .click();
-  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(8);
-  await expect(pair.host.locator(".option")).toHaveCount(1);
-  await expect(pair.host.locator(".square.chosen")).toHaveCount(3);
-  await expect(pair.host.locator(".game-status")).toContainText(
-    "Tap one piece to return it, or choose a group below.",
-  );
-  await pair.host
-    .getByRole("button", { name: "Confirm selection", exact: false })
-    .click();
+  await expect(pair.host.locator(".square.upgradeable:enabled")).toHaveCount(0);
+  await expect(pair.host.locator(".option")).toHaveCount(0);
   await expect(pair.guest.locator(".owner-0.player-card")).toContainText(
     "3 cats in pool",
   );

@@ -1394,3 +1394,73 @@ async fn existing_database_mode_never_creates_a_replacement() {
     assert!(App::open_existing(&url, false).await.is_err());
     assert!(!path.exists());
 }
+
+#[tokio::test]
+async fn repeated_graduation_continues_after_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let url = format!("sqlite://{}", temp.path().join("quiltfall.db").display());
+    let state = App::open(&url, false).await.unwrap();
+    let routes = router(state.clone());
+    let (id, host, _) = create(&routes, "Roo").await;
+    let guest = join(&routes, &id, "Bean").await;
+    let path = format!("/api/games/{id}/actions");
+    let mut saved = GameState::new(0);
+    for (id, (x, y)) in [(0, 0), (1, 0), (2, 0), (0, 3), (1, 3), (2, 3)]
+        .into_iter()
+        .enumerate()
+    {
+        saved.pieces[id].pos = Some(Pos { x, y });
+    }
+    sqlx::query("UPDATE games SET state=? WHERE id=?")
+        .bind(serde_json::to_string(&saved).unwrap())
+        .bind(&id)
+        .execute(&state.pool)
+        .await
+        .unwrap();
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &host,
+        json!({"revision":1,"action":{"type":"place","kind":"kitten","x":5,"y":5}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let pending = body(response).await;
+    assert_eq!(
+        pending["game"]["state"]["phase"]["options"],
+        json!([[0, 1, 2], [3, 4, 5]])
+    );
+    state.pool.close().await;
+    drop(routes);
+    drop(state);
+    let routes = router(App::open(&url, false).await.unwrap());
+    assert_eq!(snapshot(&routes, &id, &host).await["game"], pending["game"]);
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &guest,
+        json!({"revision":2,"action":{"type":"graduate","pieces":[0,1,2]}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let response = request(
+        &routes,
+        "POST",
+        &path,
+        &host,
+        json!({"revision":2,"action":{"type":"graduate","pieces":[0,1,2]}}),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let done = body(response).await;
+    assert_eq!(done["game"]["state"]["phase"]["type"], "placement");
+    assert_eq!(done["game"]["state"]["turn"], 1);
+    assert_eq!(done["game"]["state"]["move_count"], 1);
+    for id in 0..6 {
+        assert_eq!(done["game"]["state"]["pieces"][id]["kind"], "cat");
+        assert!(done["game"]["state"]["pieces"][id]["pos"].is_null());
+    }
+    assert_eq!(done["effects"].as_array().unwrap().len(), 6);
+}

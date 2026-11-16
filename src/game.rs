@@ -183,9 +183,9 @@ impl GameState {
                 }
                 state.graduate(&pieces, &mut effects);
                 if actor == self.turn {
-                    state.finish_opponent_graduation(&mut effects);
+                    state.finish_placement(&mut effects);
                 } else {
-                    state.end_turn();
+                    state.finish_opponent_graduation(&mut effects);
                 }
             }
             Action::Resign => unreachable!(),
@@ -246,13 +246,7 @@ impl GameState {
     }
 
     fn finish_placement(&mut self, effects: &mut Vec<Effect>) {
-        let mut options = self.lines(self.turn);
-        let on_bed: Vec<u8> = self
-            .pieces
-            .iter()
-            .filter(|p| p.owner == self.turn && p.pos.is_some())
-            .map(|p| p.id)
-            .collect();
+        let options = self.lines(self.turn);
         if options.iter().any(|line| {
             line.iter()
                 .all(|id| self.pieces[*id as usize].kind == Kind::Cat)
@@ -263,6 +257,18 @@ impl GameState {
             };
             return;
         }
+        if !self.resolve_graduation(options, effects) {
+            self.finish_opponent_graduation(effects);
+        }
+    }
+
+    fn finish_full_board(&mut self) {
+        let on_bed: Vec<u8> = self
+            .pieces
+            .iter()
+            .filter(|p| p.owner == self.turn && p.pos.is_some())
+            .map(|p| p.id)
+            .collect();
         if on_bed.len() == 8 {
             if on_bed
                 .iter()
@@ -274,11 +280,12 @@ impl GameState {
                 };
                 return;
             }
-            options.extend(on_bed.into_iter().map(|id| vec![id]));
+            self.phase = Phase::Graduation {
+                options: on_bed.into_iter().map(|id| vec![id]).collect(),
+            };
+            return;
         }
-        if !self.resolve_graduation(options, effects) {
-            self.finish_opponent_graduation(effects);
-        }
+        self.end_turn();
     }
 
     fn finish_opponent_graduation(&mut self, effects: &mut Vec<Effect>) {
@@ -291,7 +298,7 @@ impl GameState {
             })
             .collect();
         if !self.resolve_graduation(options, effects) {
-            self.end_turn();
+            self.finish_full_board();
         }
     }
 
@@ -301,7 +308,16 @@ impl GameState {
             0 => false,
             1 => {
                 self.graduate(&options[0], effects);
-                false
+                let owner = self.pieces[options[0][0] as usize].owner;
+                let remaining = self
+                    .lines(owner)
+                    .into_iter()
+                    .filter(|line| {
+                        line.iter()
+                            .any(|id| self.pieces[*id as usize].kind == Kind::Kitten)
+                    })
+                    .collect();
+                self.resolve_graduation(remaining, effects)
             }
             _ => {
                 self.phase = Phase::Graduation { options };

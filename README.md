@@ -61,14 +61,13 @@ next placement.
 A line graduates automatically when it is its owner's only available choice.
 Otherwise, that player chooses one highlighted group and taps
 **Confirm selection**.
-Resolve the placing player's graduation first, then the opponent's, with at most
-one graduation per player per placement. Finish both players' choices before the
+Resolve the placing player's graduation first, then the opponent's, rechecking each player until no eligible groups remain. Finish both players' choices before the
 next placement. This immediate opponent graduation is a Quiltfall rule variant.
 
-If all **eight of your pieces** are on the quilt after your own placement and at
-least one is a kitten, you can instead tap a ringed kitten to retrieve and upgrade
+If all **eight of your pieces** are on the quilt after all nudges and both players’ graduations and at
+least one is a kitten, you can tap a ringed kitten to retrieve and upgrade
 it, or tap an adult cat to return it to your pool.
-You can still choose an eligible group of three. Resolve the choice before your
+Resolve the choice before your
 partner's turn begins.
 
 ### Win the quilt

@@ -456,11 +456,9 @@ function renderGame() {
   const graduationHint = !yourGraduation
     ? "Your partner is choosing which pieces to return."
     : singles.size
-      ? groups.length
-        ? "Tap one piece to return it, or choose a group below. Kittens become cats; cats return to your pool."
-        : mixed
-          ? "Your quilt is full. Tap one of your pieces. Kittens become cats; cats return to your pool."
-          : "Your quilt is full. Tap a kitten to upgrade it."
+      ? mixed
+        ? "Your quilt is full. Tap one of your pieces. Kittens become cats; cats return to your pool."
+        : "Your quilt is full. Tap a kitten to upgrade it."
       : "Select one group below. The highlighted pieces return to your pool.";
   let squares = "";
   for (let y = 0; y < 6; y++) {
